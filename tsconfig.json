@@ -1,0 +1,9 @@
+{
+  "extends": "../astro/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "bun-types"],
+    "jsx": "preserve"
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

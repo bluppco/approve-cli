@@ -1,0 +1,35 @@
+{
+  "name": "@approve/cli",
+  "version": "2026.8.27",
+  "description": "Command-line access to Approve for people and local coding agents",
+  "type": "module",
+  "bin": {
+    "approve": "dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "bun run build.ts",
+    "test": "bun test tests",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "prepack": "bun run test && bun run check && bun run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@loomup/client": "^0.1.8",
+    "commander": "^14.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "bun-types": "^1.2.22",
+    "typescript": "^5.9.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "UNLICENSED"
+}
