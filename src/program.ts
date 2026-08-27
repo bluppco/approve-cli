@@ -61,7 +61,7 @@ import {
   type IssueStatusCategory,
 } from "./api-client.js";
 import { CliError } from "./errors.js";
-import { CliOutput, confirmDestructive, promptSecret, promptText, textFromOptions } from "./io.js";
+import { CliOutput, confirmDestructive, textFromOptions } from "./io.js";
 import { CliRuntime, type ScopeOverrides } from "./runtime.js";
 
 type GlobalOptions = ScopeOverrides & { json?: boolean; yes?: boolean; noColor?: boolean };
@@ -164,7 +164,7 @@ export function createProgram(runtime: CliRuntime) {
   program
     .name("approve")
     .description("Manage Approve from a terminal or local coding agent")
-    .version("0.1.0")
+    .version("0.1.1")
     .option("-w, --workspace <workspace>", "workspace slug or id")
     .option("-p, --project <project>", "project slug or id")
     .option("--json", "emit stable JSON envelopes")
@@ -178,12 +178,10 @@ export function createProgram(runtime: CliRuntime) {
 
   const auth = program.command("auth").description("Manage the local Approve session");
   auth.command("login")
-    .description("Sign in and save a refreshable local session")
-    .option("--email <email>", "account email")
-    .action(async (options: { email?: string }, command: Command) => {
-      const email = options.email ?? await promptText(runtime.io, "Email: ");
-      const password = await promptSecret(runtime.io, "Password: ");
-      const result = await runtime.login(email, password);
+    .description("Sign in through approve.so and save a refreshable local session")
+    .option("--no-browser", "print the approval URL without opening it")
+    .action(async (options: { browser?: boolean }, command: Command) => {
+      const result = await runtime.login({ browser: options.browser });
       output(runtime, command).data({ email: result.user.email, workspaces: result.workspaces.length, message: "Signed in." });
     });
   auth.command("status")

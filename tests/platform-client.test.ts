@@ -51,4 +51,49 @@ describe("Approve API transport", () => {
       "Bearer access-2:https://approve.so/api/v1/workspaces",
     ]);
   });
+
+  it("starts and redeems browser device authorization through approve.so", async () => {
+    const calls: string[] = [];
+    const client = new ApproveApiClient({
+      fetcher: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        calls.push(`${init?.method ?? "GET"} ${new Headers(init?.headers).get("Content-Type")} ${init?.body ?? ""} ${url}`);
+        if (url.endsWith("/auth/device")) {
+          return Response.json({ data: {
+            device_code: "ABCD-EFGH.secret",
+            user_code: "ABCD-EFGH",
+            verification_uri: "https://approve.so/cli/auth",
+            verification_uri_complete: "https://approve.so/cli/auth?user_code=ABCD-EFGH",
+            expires_in: 600,
+            interval: 5,
+          } });
+        }
+        return Response.json({ data: { access_token: "access", refresh_token: "refresh", token_type: "Bearer", expires_in: 900 } });
+      }) as typeof fetch,
+    });
+
+    const authorization = await client.startDeviceAuthorization();
+    const tokens = await client.pollDeviceAuthorization(authorization.device_code);
+
+    assert.equal(authorization.user_code, "ABCD-EFGH");
+    assert.equal(tokens.refresh_token, "refresh");
+    assert.deepEqual(calls, [
+      "POST application/json {} https://approve.so/api/v1/auth/device",
+      `POST application/json ${JSON.stringify({ device_code: authorization.device_code })} https://approve.so/api/v1/auth/device/token`,
+    ]);
+  });
+
+  it("preserves device polling error details", async () => {
+    const client = new ApproveApiClient({
+      fetcher: (async () => Response.json({
+        error: { code: "slow_down", message: "Poll less frequently.", details: { interval: 10 } },
+      }, { status: 400 })) as unknown as typeof fetch,
+    });
+
+    await assert.rejects(client.pollDeviceAuthorization("ABCD-EFGH.secret"), (caught: unknown) => {
+      assert.equal((caught as { code?: string }).code, "slow_down");
+      assert.deepEqual((caught as { details?: unknown }).details, { interval: 10 });
+      return true;
+    });
+  });
 });

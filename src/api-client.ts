@@ -5,6 +5,14 @@ export const DEFAULT_APPROVE_API_URL = "https://approve.so/api/v1";
 export type ApiRecord = Record<string, any>;
 export type AuthUser = { id: string; email: string; [key: string]: unknown };
 export type AuthTokens = { access_token: string; refresh_token: string; token_type: string; expires_in: number; user?: AuthUser };
+export type DeviceAuthorization = {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete?: string;
+  expires_in: number;
+  interval: number;
+};
 export type ApproveContext = { api: ApproveApiClient; db: ApproveApiClient; profile: ApiRecord };
 export type ProjectScope = "public" | "workspace" | "departments";
 export type StatusColor = "slate" | "blue" | "amber" | "green" | "red" | "purple" | "pink";
@@ -86,11 +94,11 @@ export class ApproveApiClient {
 
   async request<T = ApiRecord>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
     const response = await this.response(path, init, retry);
-    const payload = await response.json().catch(() => null) as { data?: T; error?: { code?: string; message?: string } } | null;
+    const payload = await response.json().catch(() => null) as { data?: T; error?: { code?: string; message?: string; details?: Record<string, unknown> } } | null;
     if (!response.ok || !payload || !("data" in payload)) {
       const code = payload?.error?.code ?? (response.status === 401 ? "unauthenticated" : "api_error");
       const exitCode = response.status === 401 ? 3 : response.status === 403 ? 4 : response.status === 404 ? 5 : response.status === 409 ? 6 : response.status < 500 ? 2 : 1;
-      throw new CliError(payload?.error?.message ?? `Approve API request failed (${response.status}).`, code, exitCode);
+      throw new CliError(payload?.error?.message ?? `Approve API request failed (${response.status}).`, code, exitCode, payload?.error?.details);
     }
     return payload.data as T;
   }
@@ -118,8 +126,15 @@ export class ApproveApiClient {
     return response;
   }
 
-  async login(email: string, password: string) {
-    const tokens = await this.request<AuthTokens>("/auth/login", { method: "POST", body: JSON.stringify({ email: email.trim().toLowerCase(), password }) }, false);
+  startDeviceAuthorization() {
+    return this.request<DeviceAuthorization>("/auth/device", { method: "POST", body: "{}" }, false);
+  }
+
+  async pollDeviceAuthorization(deviceCode: string) {
+    const tokens = await this.request<AuthTokens>("/auth/device/token", {
+      method: "POST",
+      body: JSON.stringify({ device_code: deviceCode }),
+    }, false);
     this.apply(tokens);
     return tokens;
   }

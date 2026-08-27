@@ -21,10 +21,10 @@ npx @approve-so/cli --help
 
 ## Sign in and choose defaults
 
-A human signs in once. The password is read from the terminal without echo and is never stored. Refresh credentials are saved in a user-only file under the operating system's standard configuration directory.
+A human signs in once through `approve.so`. The CLI opens a browser, prints a short code to verify, and polls only the branded Approve API. Passwords are never accepted by the terminal. Refresh credentials are saved in a user-only file under the operating system's standard configuration directory.
 
 ```sh
-approve auth login --email you@example.com
+approve auth login
 approve workspaces list
 approve --workspace acme projects list
 approve --workspace acme --project web context set
@@ -32,6 +32,12 @@ approve auth status
 ```
 
 Saved context is global to the user account. Any command can override it with `--workspace` or `--project`.
+
+On a headless machine, print the URL without trying to launch a browser:
+
+```sh
+approve auth login --no-browser
+```
 
 ```sh
 approve issues list

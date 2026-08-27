@@ -71,48 +71,6 @@ async function readLine(io: CliIo, prompt: string) {
   }
 }
 
-export async function promptText(io: CliIo, prompt: string) {
-  if (!io.stdin.isTTY) throw new CliError("Interactive input is unavailable.", "non_interactive", 2);
-  return readLine(io, prompt);
-}
-
-export async function promptSecret(io: CliIo, prompt: string) {
-  if (!io.stdin.isTTY || typeof io.stdin.setRawMode !== "function") throw new CliError("A TTY is required for password entry.", "non_interactive", 2);
-  io.stderr.write(prompt);
-  const input = io.stdin;
-  const wasRaw = input.isRaw;
-  input.setRawMode(true);
-  input.resume();
-  input.setEncoding("utf8");
-  return new Promise<string>((resolve, reject) => {
-    let value = "";
-    const cleanup = () => {
-      input.off("data", onData);
-      input.setRawMode(Boolean(wasRaw));
-      input.pause();
-      io.stderr.write("\n");
-    };
-    const onData = (chunk: string | Buffer) => {
-      const text = String(chunk);
-      for (const character of text) {
-        if (character === "\r" || character === "\n") {
-          cleanup();
-          resolve(value);
-          return;
-        }
-        if (character === "\u0003") {
-          cleanup();
-          reject(new CliError("Cancelled.", "cancelled", 130));
-          return;
-        }
-        if (character === "\u007f" || character === "\b") value = value.slice(0, -1);
-        else if (character >= " ") value += character;
-      }
-    };
-    input.on("data", onData);
-  });
-}
-
 export async function confirmDestructive(io: CliIo, question: string, yes: boolean) {
   if (yes) return;
   if (!io.stdin.isTTY) throw new CliError("This destructive command requires --yes in non-interactive use.", "confirmation_required", 2);

@@ -15,9 +15,17 @@ import {
 import { CliConfigStore, type StoredContext, type StoredSelection } from "./config.js";
 import { CliError } from "./errors.js";
 import type { CliIo } from "./io.js";
+import { openBrowser } from "./browser.js";
 
 export type ScopeOverrides = { workspace?: string; project?: string };
 export type ResolvedScope = { context: ApproveContext; workspace: ApiRecord; project?: ApiRecord };
+type RuntimeOptions = {
+  openBrowser?: (url: string) => Promise<boolean>;
+  sleep?: (milliseconds: number) => Promise<void>;
+  now?: () => number;
+  fetcher?: typeof fetch;
+  baseUrl?: string;
+};
 
 function matches(value: string, ...candidates: Array<string | number | null | undefined>) {
   const normalized = value.toLowerCase();
@@ -32,15 +40,55 @@ export class CliRuntime {
   private apiValue: ApproveApiClient | null = null;
   private contextValue: ApproveContext | null = null;
 
-  constructor(readonly io: CliIo, readonly store = new CliConfigStore()) {}
+  constructor(
+    readonly io: CliIo,
+    readonly store = new CliConfigStore(),
+    private readonly options: RuntimeOptions = {},
+  ) {}
 
   private client(accessToken?: string, refreshToken?: string) {
-    return new ApproveApiClient({ accessToken, refreshToken, onTokens: (tokens) => this.persistTokens(tokens) });
+    return new ApproveApiClient({
+      accessToken,
+      refreshToken,
+      fetcher: this.options.fetcher,
+      baseUrl: this.options.baseUrl,
+      onTokens: (tokens) => this.persistTokens(tokens),
+    });
   }
 
-  async login(email: string, password: string) {
+  async login(options: { browser?: boolean } = {}) {
     const api = this.client();
-    const tokens = await api.login(email, password);
+    const authorization = await api.startDeviceAuthorization();
+    const browserUrl = authorization.verification_uri_complete ?? authorization.verification_uri;
+    this.io.stderr.write(`Open ${authorization.verification_uri}\nCode: ${authorization.user_code}\n`);
+    if (options.browser !== false) {
+      const opened = await (this.options.openBrowser ?? openBrowser)(browserUrl);
+      if (!opened) this.io.stderr.write("Could not open a browser automatically. Open the URL above manually.\n");
+    }
+
+    const now = this.options.now ?? Date.now;
+    const sleep = this.options.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+    const deadline = now() + authorization.expires_in * 1000;
+    let interval = Math.max(1, authorization.interval || 5);
+    let tokens: AuthTokens | null = null;
+    while (now() < deadline) {
+      await sleep(interval * 1000);
+      try {
+        tokens = await api.pollDeviceAuthorization(authorization.device_code);
+        break;
+      } catch (caught) {
+        if (!(caught instanceof CliError)) throw caught;
+        if (caught.code === "authorization_pending") continue;
+        if (caught.code === "slow_down") {
+          const requested = Number(caught.details?.interval);
+          interval = Number.isFinite(requested) && requested > interval ? requested : interval + 5;
+          continue;
+        }
+        if (caught.code === "expired_token") throw new CliError("The browser sign-in expired. Run `approve auth login` again.", "expired_token", 3);
+        throw caught;
+      }
+    }
+    if (!tokens) throw new CliError("The browser sign-in expired. Run `approve auth login` again.", "expired_token", 3);
     this.store.writeTokens(tokens);
     this.apiValue = api;
     this.contextValue = await this.loadContext(api);
