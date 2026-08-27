@@ -1,4 +1,4 @@
-# @approve/cli
+# @approve-so/cli
 
 Command-line access to [Approve](https://approve.so) for people and local coding agents.
 
@@ -9,14 +9,14 @@ The CLI connects only to Approve's versioned REST API at `https://approve.so/api
 Node.js 20 or newer is required.
 
 ```sh
-npm install --global @approve/cli
+npm install --global @approve-so/cli
 approve --help
 ```
 
 It can also be run without a global installation:
 
 ```sh
-npx @approve/cli --help
+npx @approve-so/cli --help
 ```
 
 ## Sign in and choose defaults

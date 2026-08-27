@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@approve/cli",
+      "name": "@approve-so/cli",
       "dependencies": {
         "commander": "^14.0.3",
       },

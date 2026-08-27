@@ -1,5 +1,5 @@
 {
-  "name": "@approve/cli",
+  "name": "@approve-so/cli",
   "version": "0.1.0",
   "description": "Command-line access to Approve for people and local coding agents",
   "type": "module",
