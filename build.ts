@@ -11,7 +11,7 @@ const result = await Bun.build({
   naming: "bin.js",
   target: "node",
   format: "esm",
-  external: ["@loomup/client", "commander"],
+  external: ["commander"],
   sourcemap: "external",
   minify: false,
 });
@@ -20,5 +20,9 @@ if (!result.success) {
   for (const log of result.logs) console.error(log);
   process.exitCode = 1;
 } else {
+  for (const artifact of [output, `${output}.map`]) {
+    const contents = await Bun.file(artifact).text();
+    if (/tryloomup\.com|@loomup\/client|\.\.\/astro/i.test(contents)) throw new Error(`Private platform implementation leaked into ${artifact}.`);
+  }
   await chmod(output, 0o755);
 }

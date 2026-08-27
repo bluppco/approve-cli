@@ -2,7 +2,7 @@
 
 Command-line access to [Approve](https://approve.so) for people and local coding agents.
 
-The CLI connects directly to Approve's Loomup project and uses the same account, workspace membership, project roles, and server-enforced access rules as the web application. It does not require an Approve API key.
+The CLI connects only to Approve's versioned REST API at `https://approve.so/api/v1`. The API runs in the existing Approve deployment and applies the same account, workspace membership, project-role, and server-enforced access rules as the web application. It does not require a separate API key.
 
 ## Install
 
@@ -40,7 +40,7 @@ approve context clear
 approve auth logout
 ```
 
-For isolated development or tests, `APPROVE_CONFIG_DIR` changes where credentials and defaults are stored.
+For isolated development or tests, `APPROVE_CONFIG_DIR` changes where credentials and defaults are stored. `APPROVE_API_URL` may point a development build at a local or staging Approve API; production defaults to `https://approve.so/api/v1`.
 
 ## Common agent workflows
 
@@ -52,6 +52,7 @@ approve --json issues show APP-42
 approve --json issues create "Handle refresh races" \
   --description-file issue.md \
   --priority high \
+  --label Backend \
   --assignee @mohit
 approve --json comments add APP-42 --body-file comment.md
 approve --json issues update APP-42 --status Done
@@ -68,9 +69,11 @@ printf 'Reproduced on the latest build.\n' | approve --json comments add APP-42 
 Run `approve <group> --help` for command-specific flags. The groups are:
 
 - `workspaces`, `projects`, and `project-roles`
-- `statuses`, `departments`, `members`, and `invitations`
+- `statuses`, `issue-labels`, `departments`, `members`, and `invitations`
 - `issues`, `comments`, and `images`
 - `entries`, `labels`, and `attachments`
+
+Issue labels are workspace-scoped and can be assigned to issues with repeated `--label` flags. Repeated labels on `issues list` match any selected label. On `issues update`, repeated `--label` values replace the full set and `--clear-labels` removes it. The separate `labels` group remains the project-scoped catalog for timeline entries.
 
 Issue and timeline-entry deletion is soft deletion, matching the web product. Approve does not currently expose workspace or project deletion.
 
@@ -110,7 +113,7 @@ Successful data is written to stdout. Prompts, warnings, and failures use stderr
 
 ## Development
 
-This package intentionally lives beside, not inside, the Astro application. Its build bundles the shared Approve domain layer while leaving `@loomup/client` and `commander` as package dependencies.
+This package intentionally lives beside, not inside, the Astro application. It contains its own HTTP client and imports no Astro source or private platform SDK. The build fails if a private upstream hostname, SDK import, or Astro source path is ever included in a publishable artifact.
 
 ```sh
 bun install

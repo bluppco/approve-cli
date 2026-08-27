@@ -1,6 +1,6 @@
 {
   "name": "@approve/cli",
-  "version": "2026.8.27",
+  "version": "0.1.0",
   "description": "Command-line access to Approve for people and local coding agents",
   "type": "module",
   "bin": {
@@ -20,7 +20,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@loomup/client": "^0.1.8",
     "commander": "^14.0.3"
   },
   "devDependencies": {

@@ -20,7 +20,7 @@ async function store() {
 describe("CLI config storage", () => {
   it("persists tokens without storing a password", async () => {
     const config = await store();
-    config.writeTokens("https://example.test/p/project", {
+    config.writeTokens({
       access_token: "access-secret",
       refresh_token: "refresh-secret",
       token_type: "Bearer",
@@ -31,7 +31,8 @@ describe("CLI config storage", () => {
     assert.match(raw, /access-secret/);
     assert.match(raw, /refresh-secret/);
     assert.doesNotMatch(raw, /password/i);
-    assert.equal(config.readCredentials()?.projectUrl, "https://example.test/p/project");
+    assert.doesNotMatch(raw, /projectUrl/);
+    assert.equal(config.readCredentials()?.version, 2);
     if (process.platform !== "win32") assert.equal((await stat(config.credentialsPath)).mode & 0o777, 0o600);
   });
 

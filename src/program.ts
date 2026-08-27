@@ -8,6 +8,7 @@ import {
   createJourneyEntry,
   createJourneyInvitation,
   createJourneyIssue,
+  createJourneyIssueLabel,
   createJourneyLabel,
   createJourneyProject,
   createJourneyStatus,
@@ -31,19 +32,19 @@ import {
   updateJourneyComment,
   updateJourneyEntry,
   updateJourneyIssue,
+  updateJourneyIssueLabel,
   updateJourneyMember,
   updateJourneyProject,
   updateJourneyStatus,
   uploadJourneyAttachment,
   uploadJourneyIssueImage,
-  type ProjectScope,
-  type StatusColor,
-} from "../../astro/src/lib/journey-commands";
-import {
+  issueRouteId,
   listComments,
   listDepartments,
   listIssueImages,
+  listIssueLabels,
   listIssueStatuses,
+  listProjectLabels,
   listWorkspaceIssues,
   listWorkspaceProjects,
   listWorkspaces,
@@ -52,10 +53,13 @@ import {
   loadProjectSettings,
   loadProjectTimeline,
   loadTeam,
-} from "../../astro/src/lib/journey-data";
-import { issueRouteId } from "../../astro/src/lib/route-identifiers";
-import type { IssuePriority, ProjectLabel } from "../../astro/src/lib/types";
-import type { IssueStatusCategory } from "../../astro/src/lib/issue-statuses";
+  type ProjectScope,
+  type StatusColor,
+  type ApiRecord,
+  type IssuePriority,
+  type ProjectLabel,
+  type IssueStatusCategory,
+} from "./api-client.js";
 import { CliError } from "./errors.js";
 import { CliOutput, confirmDestructive, promptSecret, promptText, textFromOptions } from "./io.js";
 import { CliRuntime, type ScopeOverrides } from "./runtime.js";
@@ -124,6 +128,11 @@ async function uploadedFile(path: string) {
   return { name: basename(absolute), bytes: await readFile(absolute) };
 }
 
+function responseFileName(response: Response, fallback: string) {
+  const value = response.headers.get("Content-Disposition") ?? "";
+  return value.match(/filename="([^"]+)"/i)?.[1] ?? fallback;
+}
+
 async function resolvedDepartments(runtime: CliRuntime, scope: Awaited<ReturnType<CliRuntime["scope"]>>, values: string[] | undefined) {
   if (values === undefined) return undefined;
   return Promise.all(values.map(async (value) => (await runtime.resolveDepartment(scope.context, scope.workspace, value)).id));
@@ -133,16 +142,21 @@ async function projectScopeFor(runtime: CliRuntime, command: Command, projectKey
   return runtime.scope(overrides(command, projectKey ? { project: projectKey } : {}), { project: "required" });
 }
 
-function workspaceRow(workspace: { id: string; name: string; slug: string; role?: string; isDefault?: boolean }) {
+function workspaceRow(workspace: ApiRecord) {
   return { slug: workspace.slug, name: workspace.name, role: workspace.role, default: workspace.isDefault ?? false, id: workspace.id };
 }
 
-function projectRow(project: { id: string; slug: string; name: string; visibility: string; audience: string; role?: string | null; unresolvedIssueCount?: number | null; entryCount?: number | null }) {
+function projectRow(project: ApiRecord) {
   return { slug: project.slug, name: project.name, scope: project.visibility === "public" ? "public" : project.audience === "departments" ? "departments" : "workspace", role: project.role ?? "—", issues: project.unresolvedIssueCount ?? "—", entries: project.entryCount ?? "—", id: project.id };
 }
 
-function issueRow(issue: Awaited<ReturnType<typeof listWorkspaceIssues>>["issues"][number]) {
-  return { key: issue.publicId, title: issue.title, project: issue.project.slug, status: issue.status.name, priority: issue.priority, assignee: issue.assignee?.handle ?? "—", due: issue.dueDate ?? "—", updated: issue.updatedAt };
+function issueRow(issue: ApiRecord) {
+  return { key: issue.publicId, title: issue.title, project: issue.project.slug, status: issue.status.name, labels: issue.labels?.map((label: ApiRecord) => label.name).join(", ") || "—", priority: issue.priority, assignee: issue.assignee?.handle ?? "—", due: issue.dueDate ?? "—", updated: issue.updatedAt };
+}
+
+async function resolvedIssueLabels(runtime: CliRuntime, scope: Awaited<ReturnType<CliRuntime["scope"]>>, values: string[] | undefined, includeArchived = false) {
+  if (values === undefined) return undefined;
+  return Promise.all(values.map((value) => runtime.resolveIssueLabel(scope.context, scope.workspace, value, includeArchived)));
 }
 
 export function createProgram(runtime: CliRuntime) {
@@ -150,7 +164,7 @@ export function createProgram(runtime: CliRuntime) {
   program
     .name("approve")
     .description("Manage Approve from a terminal or local coding agent")
-    .version("2026.8.27")
+    .version("0.1.0")
     .option("-w, --workspace <workspace>", "workspace slug or id")
     .option("-p, --project <project>", "project slug or id")
     .option("--json", "emit stable JSON envelopes")
@@ -209,7 +223,7 @@ export function createProgram(runtime: CliRuntime) {
   workspaces.command("show [workspace]").action(async (workspaceKey: string | undefined, _options: unknown, command: Command) => {
     const context = await runtime.authenticated();
     const scope = await runtime.scope(overrides(command, workspaceKey ? { workspace: workspaceKey } : {}), { project: "none" });
-    const team = await loadTeam(context.db, scope.workspace.slug);
+    const team = await loadTeam(context.api, scope.workspace.slug);
     output(runtime, command).data({ ...scope.workspace, role: team.workspace.role, members: team.members.length, departments: team.departments.length, pendingInvitations: team.pendingInvitations.length });
   });
   workspaces.command("create <name>")
@@ -225,8 +239,8 @@ export function createProgram(runtime: CliRuntime) {
   const projects = program.command("projects").description("Manage projects and their audiences");
   projects.command("list").action(async (_options: unknown, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
-    const result = await listWorkspaceProjects(scope.context.db, scope.workspace.slug);
-    output(runtime, command).data(globals(command).json ? result.projects : result.projects.filter((project) => project.access.canRead).map(projectRow));
+    const result = await listWorkspaceProjects(scope.context.api, scope.workspace.slug);
+    output(runtime, command).data(globals(command).json ? result.projects : result.projects.filter((project: ApiRecord) => project.access.canRead).map(projectRow));
   });
   projects.command("show [project]").action(async (projectKey: string | undefined, _options: unknown, command: Command) => {
     const scope = await projectScopeFor(runtime, command, projectKey);
@@ -270,7 +284,7 @@ export function createProgram(runtime: CliRuntime) {
   roles.command("list").action(async (_options: unknown, command: Command) => {
     const scope = await projectScopeFor(runtime, command);
     const settings = await loadProjectSettings(scope.context, scope.workspace.slug, scope.project!.id);
-    output(runtime, command).data(settings.members.map((member) => ({ handle: member.handle, name: member.name, email: member.email, role: member.role, id: member.userId })));
+    output(runtime, command).data(settings.members.map((member: ApiRecord) => ({ handle: member.handle, name: member.name, email: member.email, role: member.role, id: member.userId })));
   });
   roles.command("set <member>")
     .addOption(new Option("--role <role>").choices(["owner", "editor"]).makeOptionMandatory())
@@ -284,14 +298,14 @@ export function createProgram(runtime: CliRuntime) {
     const scope = await projectScopeFor(runtime, command);
     const member = await runtime.resolvePerson(scope.context, scope.workspace, memberKey);
     await confirmDestructive(runtime.io, `Remove @${member.handle ?? member.email} from this project?`, Boolean(globals(command).yes));
-    const removed = await removeJourneyProjectRole(scope.context, scope.project!.id, member.id);
+    const removed = await removeJourneyProjectRole(scope.context, scope.workspace.slug, scope.project!.id, member.id);
     output(runtime, command).data(removed);
   });
 
   const statuses = program.command("statuses").description("Manage the workspace issue workflow");
   statuses.command("list").option("--archived", "include archived statuses").action(async (options: { archived?: boolean }, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
-    const rows = await listIssueStatuses(scope.context.db, scope.workspace.slug, Boolean(options.archived));
+    const rows = await listIssueStatuses(scope.context.api, scope.workspace.slug, Boolean(options.archived));
     output(runtime, command).data(rows.map((status) => ({ name: status.name, category: status.category, color: status.color, default: status.isDefault ?? false, archived: Boolean(status.archivedAt), position: status.position, id: status.id })));
   });
   statuses.command("create <name>")
@@ -310,7 +324,7 @@ export function createProgram(runtime: CliRuntime) {
       const scope = await runtime.scope(overrides(command), { project: "none" });
       const status = await runtime.resolveStatus(scope.context, scope.workspace, statusKey);
       if (options.category && options.category !== status.category) {
-        const count = (await scope.context.db.issues.find({ where: { status_id: status.id }, filter: { deleted_at: { isNull: true } }, select: ["id"], limit: 1 })).meta.total;
+        const count = await runtime.activeIssueCount(scope.context, scope.workspace, status.id);
         if (count > 0) await confirmDestructive(runtime.io, `Changing this category immediately reclassifies ${count} active issue${count === 1 ? "" : "s"}. Continue?`, Boolean(globals(command).yes));
       }
       const updated = await updateJourneyStatus(scope.context, scope.workspace.slug, status.id, { name: options.name, category: options.category ? asStatusCategory(options.category) : undefined, color: options.color ? asStatusColor(options.color) : undefined });
@@ -336,10 +350,39 @@ export function createProgram(runtime: CliRuntime) {
     });
   }
 
+  const issueLabels = program.command("issue-labels").description("Manage the workspace issue label catalog");
+  issueLabels.command("list").option("--archived", "include archived labels").action(async (options: { archived?: boolean }, command: Command) => {
+    const scope = await runtime.scope(overrides(command), { project: "none" });
+    output(runtime, command).data(await listIssueLabels(scope.context.api, scope.workspace.slug, Boolean(options.archived)));
+  });
+  issueLabels.command("create <name>")
+    .addOption(new Option("--color <color>").choices([...statusColors]).default("blue"))
+    .action(async (name: string, options: { color: StatusColor }, command: Command) => {
+      const scope = await runtime.scope(overrides(command), { project: "none" });
+      output(runtime, command).data(await createJourneyIssueLabel(scope.context, scope.workspace.slug, { name, color: asStatusColor(options.color) }));
+    });
+  issueLabels.command("update <label>")
+    .option("--name <name>")
+    .addOption(new Option("--color <color>").choices([...statusColors]))
+    .action(async (labelKey: string, options: { name?: string; color?: StatusColor }, command: Command) => {
+      if (options.name === undefined && options.color === undefined) throw new CliError("Pass --name or --color.", "invalid_input", 2);
+      const scope = await runtime.scope(overrides(command), { project: "none" });
+      const label = await runtime.resolveIssueLabel(scope.context, scope.workspace, labelKey);
+      output(runtime, command).data(await updateJourneyIssueLabel(scope.context, scope.workspace.slug, label.id, { name: options.name, color: options.color ? asStatusColor(options.color) : undefined }));
+    });
+  for (const [name, archived] of [["archive", true], ["restore", false]] as const) {
+    issueLabels.command(`${name} <label>`).action(async (labelKey: string, _options: unknown, command: Command) => {
+      const scope = await runtime.scope(overrides(command), { project: "none" });
+      const label = await runtime.resolveIssueLabel(scope.context, scope.workspace, labelKey);
+      if (archived) await confirmDestructive(runtime.io, `Archive ${label.name}? Existing issues will keep it.`, Boolean(globals(command).yes));
+      output(runtime, command).data(await updateJourneyIssueLabel(scope.context, scope.workspace.slug, label.id, { archived }));
+    });
+  }
+
   const departments = program.command("departments").description("Manage workspace departments");
   departments.command("list").option("--archived", "include archived departments").action(async (options: { archived?: boolean }, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
-    const rows = await listDepartments(scope.context.db, scope.workspace.slug);
+    const rows = await listDepartments(scope.context.api, scope.workspace.slug);
     output(runtime, command).data(rows.filter((department) => options.archived || !department.archivedAt));
   });
   departments.command("create <name>").action(async (name: string, _options: unknown, command: Command) => {
@@ -349,21 +392,21 @@ export function createProgram(runtime: CliRuntime) {
   departments.command("rename <department> <name>").action(async (departmentKey: string, name: string, _options: unknown, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
     const department = await runtime.resolveDepartment(scope.context, scope.workspace, departmentKey);
-    output(runtime, command).data(await renameJourneyDepartment(scope.context, department.id, name));
+    output(runtime, command).data(await renameJourneyDepartment(scope.context, scope.workspace.slug, department.id, name));
   });
   for (const [name, archived] of [["archive", true], ["restore", false]] as const) {
     departments.command(`${name} <department>`).action(async (departmentKey: string, _options: unknown, command: Command) => {
       const scope = await runtime.scope(overrides(command), { project: "none" });
       const department = await runtime.resolveDepartment(scope.context, scope.workspace, departmentKey);
       if (archived) await confirmDestructive(runtime.io, `Archive ${department.name}?`, Boolean(globals(command).yes));
-      output(runtime, command).data(await setJourneyDepartmentArchived(scope.context, department.id, archived));
+      output(runtime, command).data(await setJourneyDepartmentArchived(scope.context, scope.workspace.slug, department.id, archived));
     });
   }
 
   const members = program.command("members").description("Manage workspace memberships");
   members.command("list").action(async (_options: unknown, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
-    const team = await loadTeam(scope.context.db, scope.workspace.slug);
+    const team = await loadTeam(scope.context.api, scope.workspace.slug);
     output(runtime, command).data(team.members.map((member) => ({ handle: member.handle, name: member.name, email: member.email, role: member.role, department: member.departmentName ?? "—", id: member.id })));
   });
   members.command("update <member>")
@@ -386,7 +429,7 @@ export function createProgram(runtime: CliRuntime) {
   const invitations = program.command("invitations").description("Create and revoke workspace invitations");
   invitations.command("list").action(async (_options: unknown, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
-    output(runtime, command).data((await loadTeam(scope.context.db, scope.workspace.slug)).pendingInvitations);
+    output(runtime, command).data((await loadTeam(scope.context.api, scope.workspace.slug)).pendingInvitations);
   });
   invitations.command("create <email>")
     .addOption(new Option("--role <role>").choices(["admin", "member"]).default("member"))
@@ -399,8 +442,8 @@ export function createProgram(runtime: CliRuntime) {
     });
   invitations.command("revoke <invitation>").action(async (invitationId: string, _options: unknown, command: Command) => {
     await confirmDestructive(runtime.io, "Revoke this invitation?", Boolean(globals(command).yes));
-    const context = await runtime.authenticated();
-    output(runtime, command).data(await revokeJourneyInvitation(context, invitationId));
+    const scope = await runtime.scope(overrides(command), { project: "none" });
+    output(runtime, command).data(await revokeJourneyInvitation(scope.context, scope.workspace.slug, invitationId));
   });
 
   const issues = program.command("issues").description("Manage issues");
@@ -408,17 +451,22 @@ export function createProgram(runtime: CliRuntime) {
     .option("--status <status>", "status name or id")
     .option("--category <category>", "status category")
     .option("--assignee <member>", "assignee handle or id")
+    .option("--label <label>", "issue label name or id (repeatable, matches any)", collect, [])
     .addOption(new Option("--priority <priority>").choices([...priorities]))
     .option("--due <due>", "overdue, today, week, none, or YYYY-MM-DD")
     .option("--limit <limit>", "maximum rows", asPositiveInteger, 200)
-    .action(async (options: { status?: string; category?: string; assignee?: string; priority?: IssuePriority; due?: string; limit: number }, command: Command) => {
+    .action(async (options: { status?: string; category?: string; assignee?: string; label: string[]; priority?: IssuePriority; due?: string; limit: number }, command: Command) => {
       const scope = await runtime.scope(overrides(command), { project: "optional" });
-      const result = await listWorkspaceIssues(scope.context.db, scope.workspace.slug, scope.project ? { projectSlug: scope.project.slug } : {});
+      const selectedLabels = await resolvedIssueLabels(runtime, scope, options.label, false) ?? [];
+      const result = await listWorkspaceIssues(scope.context.api, scope.workspace.slug, {
+        projectSlug: scope.project?.slug,
+        labelIds: selectedLabels.map((label) => label.id),
+      });
       const status = options.status ? await runtime.resolveStatus(scope.context, scope.workspace, options.status) : undefined;
       const assignee = options.assignee ? await runtime.resolvePerson(scope.context, scope.workspace, options.assignee) : undefined;
       const today = new Date().toISOString().slice(0, 10);
       const week = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-      const rows = result.issues.filter((issue) => {
+      const rows = result.issues.filter((issue: ApiRecord) => {
         if (status && issue.statusId !== status.id) return false;
         if (options.category && issue.status.category !== options.category) return false;
         if (assignee && issue.assigneeId !== assignee.id) return false;
@@ -435,8 +483,8 @@ export function createProgram(runtime: CliRuntime) {
   issues.command("show <issue>").action(async (issueKey: string, _options: unknown, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
     const record = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
-    const detail = await loadIssue(scope.context.db, scope.workspace.slug, record.project_id, issueKey);
-    const comments = await listComments(scope.context.db, scope.workspace.slug, record.id);
+    const detail = await loadIssue(scope.context.api, scope.workspace.slug, record.project_id, issueKey);
+    const comments = await listComments(scope.context.api, scope.workspace.slug, record.id);
     output(runtime, command).data({ ...detail, comments: comments.comments });
   });
   issues.command("create <title>")
@@ -444,17 +492,19 @@ export function createProgram(runtime: CliRuntime) {
     .option("--description-file <path>", "Markdown file, or - for stdin")
     .option("--status <status>")
     .option("--assignee <member>")
+    .option("--label <label>", "issue label name or id (repeatable)", collect, [])
     .addOption(new Option("--priority <priority>").choices([...priorities]).default("normal"))
     .option("--due <date>", "YYYY-MM-DD")
     .option("--image <path>", "image to upload (repeatable)", collect, [])
-    .action(async (title: string, options: { description?: string; descriptionFile?: string; status?: string; assignee?: string; priority: IssuePriority; due?: string; image: string[] }, command: Command) => {
+    .action(async (title: string, options: { description?: string; descriptionFile?: string; status?: string; assignee?: string; label: string[]; priority: IssuePriority; due?: string; image: string[] }, command: Command) => {
       const scope = await projectScopeFor(runtime, command);
       const description = await textFromOptions(runtime.io, options.description, options.descriptionFile, "description") ?? "";
       const statusId = options.status ? (await runtime.resolveStatus(scope.context, scope.workspace, options.status, false)).id : undefined;
       const assigneeId = options.assignee ? (await runtime.resolvePerson(scope.context, scope.workspace, options.assignee)).id : undefined;
-      const issue = await createJourneyIssue(scope.context, scope.workspace.slug, { projectId: scope.project!.id, title, descriptionMarkdown: description, statusId, assigneeId, priority: asPriority(options.priority), dueDate: options.due });
+      const selectedLabels = await resolvedIssueLabels(runtime, scope, options.label, false) ?? [];
+      const issue = await createJourneyIssue(scope.context, scope.workspace.slug, { projectId: scope.project!.id, title, descriptionMarkdown: description, statusId, assigneeId, labelIds: selectedLabels.map((label) => label.id), priority: asPriority(options.priority), dueDate: options.due });
       const uploaded = [];
-      for (const path of options.image) uploaded.push(await uploadJourneyIssueImage(scope.context, scope.workspace.slug, scope.project!.id, issue.id, await uploadedFile(path)));
+      for (const path of options.image) uploaded.push(await uploadJourneyIssueImage(scope.context, scope.workspace.slug, issue.id, await uploadedFile(path)));
       output(runtime, command).data({ ...issue, publicId: issueRouteId(scope.workspace.issue_prefix, issue.issue_number, issue.id), images: uploaded.map((item) => ({ ...item.image, markdown: item.markdown })) });
     });
   issues.command("update <issue>")
@@ -464,33 +514,37 @@ export function createProgram(runtime: CliRuntime) {
     .option("--status <status>")
     .option("--assignee <member>")
     .option("--clear-assignee")
+    .option("--label <label>", "replace issue labels (repeatable)", collect)
+    .option("--clear-labels", "remove all issue labels")
     .addOption(new Option("--priority <priority>").choices([...priorities]))
     .option("--due <date>", "YYYY-MM-DD")
     .option("--clear-due")
     .option("--image <path>", "image to upload (repeatable)", collect, [])
-    .action(async (issueKey: string, options: { title?: string; description?: string; descriptionFile?: string; status?: string; assignee?: string; clearAssignee?: boolean; priority?: IssuePriority; due?: string; clearDue?: boolean; image: string[] }, command: Command) => {
+    .action(async (issueKey: string, options: { title?: string; description?: string; descriptionFile?: string; status?: string; assignee?: string; clearAssignee?: boolean; label?: string[]; clearLabels?: boolean; priority?: IssuePriority; due?: string; clearDue?: boolean; image: string[] }, command: Command) => {
+      if (options.label !== undefined && options.clearLabels) throw new CliError("Pass --label or --clear-labels, not both.", "invalid_input", 2);
       const scope = await runtime.scope(overrides(command), { project: "none" });
       const issue = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
       const description = await textFromOptions(runtime.io, options.description, options.descriptionFile, "description");
       const statusId = options.status ? (await runtime.resolveStatus(scope.context, scope.workspace, options.status, false)).id : undefined;
       const assigneeId = options.clearAssignee ? null : options.assignee ? (await runtime.resolvePerson(scope.context, scope.workspace, options.assignee)).id : undefined;
-      const updated = await updateJourneyIssue(scope.context, issue.id, { title: options.title, descriptionMarkdown: description, statusId, assigneeId, priority: options.priority, dueDate: options.clearDue ? null : options.due });
+      const selectedLabels = options.label === undefined ? undefined : await resolvedIssueLabels(runtime, scope, options.label, true);
+      const updated = await updateJourneyIssue(scope.context, scope.workspace.slug, issue.id, { title: options.title, descriptionMarkdown: description, statusId, assigneeId, labelIds: options.clearLabels ? [] : selectedLabels?.map((label) => label.id), priority: options.priority, dueDate: options.clearDue ? null : options.due });
       const uploaded = [];
-      for (const path of options.image) uploaded.push(await uploadJourneyIssueImage(scope.context, scope.workspace.slug, issue.project_id, issue.id, await uploadedFile(path)));
+      for (const path of options.image) uploaded.push(await uploadJourneyIssueImage(scope.context, scope.workspace.slug, issue.id, await uploadedFile(path)));
       output(runtime, command).data({ ...updated, publicId: issueRouteId(scope.workspace.issue_prefix, updated.issue_number, updated.id), images: uploaded.map((item) => ({ ...item.image, markdown: item.markdown })) });
     });
   issues.command("delete <issue>").action(async (issueKey: string, _options: unknown, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
     const issue = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
     await confirmDestructive(runtime.io, `Delete ${issueRouteId(scope.workspace.issue_prefix, issue.issue_number, issue.id)}?`, Boolean(globals(command).yes));
-    output(runtime, command).data(await deleteJourneyIssue(scope.context, issue.id));
+    output(runtime, command).data(await deleteJourneyIssue(scope.context, scope.workspace.slug, issue.id));
   });
 
   const comments = program.command("comments").description("Manage issue comments");
   comments.command("list <issue>").action(async (issueKey: string, _options: unknown, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
     const issue = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
-    const result = await listComments(scope.context.db, scope.workspace.slug, issue.id);
+    const result = await listComments(scope.context.api, scope.workspace.slug, issue.id);
     output(runtime, command).data(result.comments, { meta: { nextCursor: result.nextCursor } });
   });
   comments.command("add <issue>")
@@ -518,8 +572,8 @@ export function createProgram(runtime: CliRuntime) {
     });
   comments.command("delete <comment>").action(async (commentId: string, _options: unknown, command: Command) => {
     await confirmDestructive(runtime.io, "Delete this comment?", Boolean(globals(command).yes));
-    const context = await runtime.authenticated();
-    output(runtime, command).data(await deleteJourneyComment(context, commentId));
+    const scope = await runtime.scope(overrides(command), { project: "none" });
+    output(runtime, command).data(await deleteJourneyComment(scope.context, scope.workspace.slug, commentId));
   });
 
   const entries = program.command("entries").description("Manage project timeline entries");
@@ -530,7 +584,7 @@ export function createProgram(runtime: CliRuntime) {
   });
   entries.command("show <entry>").action(async (entryId: string, _options: unknown, command: Command) => {
     const scope = await projectScopeFor(runtime, command);
-    output(runtime, command).data(await loadEntry(scope.context.db, scope.workspace.slug, scope.project!.id, entryId));
+    output(runtime, command).data(await loadEntry(scope.context.api, scope.workspace.slug, scope.project!.id, entryId));
   });
   entries.command("create <title>")
     .requiredOption("--summary <summary>")
@@ -547,7 +601,7 @@ export function createProgram(runtime: CliRuntime) {
       const scope = await projectScopeFor(runtime, command);
       const body = await textFromOptions(runtime.io, options.body, options.bodyFile, "body") ?? "";
       const departmentIds = await resolvedDepartments(runtime, scope, options.department);
-      const entry = await createJourneyEntry(scope.context, scope.workspace.slug, { projectId: scope.project!.id, title, summary: options.summary, bodyMarkdown: body, wentLiveAt: parseDateTime(options.wentLiveAt), releaseUrl: options.releaseUrl, audience: options.audience, status: options.status, departmentIds, labels: labels(options.label) });
+      const entry = await createJourneyEntry(scope.context, scope.workspace.slug, scope.project!.id, { projectId: scope.project!.id, title, summary: options.summary, bodyMarkdown: body, wentLiveAt: parseDateTime(options.wentLiveAt), releaseUrl: options.releaseUrl, audience: options.audience, status: options.status, departmentIds, labels: labels(options.label) });
       const attachments = [];
       for (const path of options.attach) attachments.push(await uploadJourneyAttachment(scope.context, scope.workspace.slug, scope.project!.id, entry.id, await uploadedFile(path)));
       output(runtime, command).data({ ...entry, attachments });
@@ -569,7 +623,7 @@ export function createProgram(runtime: CliRuntime) {
       const current = await runtime.resolveEntry(scope.context, scope.workspace, scope.project!, entryId);
       const body = await textFromOptions(runtime.io, options.body, options.bodyFile, "body");
       const departmentIds = await resolvedDepartments(runtime, scope, options.department);
-      const entry = await updateJourneyEntry(scope.context, scope.workspace.slug, current.id, { title: options.title, summary: options.summary, bodyMarkdown: body, wentLiveAt: options.wentLiveAt ? parseDateTime(options.wentLiveAt) : undefined, releaseUrl: options.clearReleaseUrl ? null : options.releaseUrl, audience: options.audience, departmentIds, labels: labels(options.label) });
+      const entry = await updateJourneyEntry(scope.context, scope.workspace.slug, scope.project!.id, current.id, { title: options.title, summary: options.summary, bodyMarkdown: body, wentLiveAt: options.wentLiveAt ? parseDateTime(options.wentLiveAt) : undefined, releaseUrl: options.clearReleaseUrl ? null : options.releaseUrl, audience: options.audience, departmentIds, labels: labels(options.label) });
       const attachments = [];
       for (const path of options.attach) attachments.push(await uploadJourneyAttachment(scope.context, scope.workspace.slug, scope.project!.id, entry.id, await uploadedFile(path)));
       output(runtime, command).data({ ...entry, attachments });
@@ -578,21 +632,20 @@ export function createProgram(runtime: CliRuntime) {
     entries.command(`${name} <entry>`).action(async (entryId: string, _options: unknown, command: Command) => {
       const scope = await projectScopeFor(runtime, command);
       const entry = await runtime.resolveEntry(scope.context, scope.workspace, scope.project!, entryId);
-      output(runtime, command).data(await setJourneyEntryPublished(scope.context, entry.id, published));
+      output(runtime, command).data(await setJourneyEntryPublished(scope.context, scope.workspace.slug, scope.project!.id, entry.id, published));
     });
   }
   entries.command("delete <entry>").action(async (entryId: string, _options: unknown, command: Command) => {
     const scope = await projectScopeFor(runtime, command);
     const entry = await runtime.resolveEntry(scope.context, scope.workspace, scope.project!, entryId);
     await confirmDestructive(runtime.io, `Delete ${entry.title}?`, Boolean(globals(command).yes));
-    output(runtime, command).data(await deleteJourneyEntry(scope.context, entry.id));
+    output(runtime, command).data(await deleteJourneyEntry(scope.context, scope.workspace.slug, scope.project!.id, entry.id));
   });
 
   const labelCommands = program.command("labels").description("Manage the current project's label catalog");
   labelCommands.command("list").action(async (_options: unknown, command: Command) => {
     const scope = await projectScopeFor(runtime, command);
-    const { data } = await scope.context.db.project_labels.find({ where: { project_id: scope.project!.id }, sort: "label", limit: 200 });
-    output(runtime, command).data(data);
+    output(runtime, command).data(await listProjectLabels(scope.context.api, scope.workspace.slug, scope.project!.id));
   });
   labelCommands.command("create <label>").action(async (label: string, _options: unknown, command: Command) => {
     const scope = await projectScopeFor(runtime, command);
@@ -600,18 +653,18 @@ export function createProgram(runtime: CliRuntime) {
   });
   labelCommands.command("rename <tag> <label>").action(async (tag: string, label: string, _options: unknown, command: Command) => {
     const scope = await projectScopeFor(runtime, command);
-    output(runtime, command).data(await renameJourneyLabel(scope.context, scope.project!.id, tag, label));
+    output(runtime, command).data(await renameJourneyLabel(scope.context, scope.workspace.slug, scope.project!.id, tag, label));
   });
   labelCommands.command("delete <tag>").action(async (tag: string, _options: unknown, command: Command) => {
     const scope = await projectScopeFor(runtime, command);
     await confirmDestructive(runtime.io, `Delete label ${tag} and remove it from timeline entries?`, Boolean(globals(command).yes));
-    output(runtime, command).data(await deleteJourneyLabel(scope.context, scope.project!.id, tag));
+    output(runtime, command).data(await deleteJourneyLabel(scope.context, scope.workspace.slug, scope.project!.id, tag));
   });
 
   const attachments = program.command("attachments").description("Manage timeline entry attachments");
   attachments.command("list <entry>").action(async (entryId: string, _options: unknown, command: Command) => {
     const scope = await projectScopeFor(runtime, command);
-    const entry = await loadEntry(scope.context.db, scope.workspace.slug, scope.project!.id, entryId);
+    const entry = await loadEntry(scope.context.api, scope.workspace.slug, scope.project!.id, entryId);
     output(runtime, command).data(entry.attachments);
   });
   attachments.command("add <entry> <path>").action(async (entryId: string, path: string, _options: unknown, command: Command) => {
@@ -623,47 +676,47 @@ export function createProgram(runtime: CliRuntime) {
     .option("-o, --output <path>", "output file path")
     .option("--force", "overwrite an existing file")
     .action(async (attachmentId: string, options: { output?: string; force?: boolean }, command: Command) => {
-      const context = await runtime.authenticated();
-      const attachment = await context.db.attachments.get(attachmentId);
-      const destination = resolve(options.output ?? attachment.file_name);
+      const scope = await runtime.scope(overrides(command), { project: "none" });
+      const response = await scope.context.api.download(`/workspaces/${encodeURIComponent(scope.workspace.slug)}/attachments/${encodeURIComponent(attachmentId)}`);
+      const destination = resolve(options.output ?? responseFileName(response, attachmentId));
       if (existsSync(destination) && !options.force) throw new CliError(`${destination} already exists; pass --force to overwrite it.`, "file_exists", 2);
-      const bytes = await context.db.storage.from("attachments").downloadArrayBuffer(attachment.r2_key);
+      const bytes = await response.arrayBuffer();
       await writeFile(destination, Buffer.from(bytes));
       output(runtime, command).data({ path: destination, bytes: bytes.byteLength, attachmentId });
     });
   attachments.command("remove <attachment>").action(async (attachmentId: string, _options: unknown, command: Command) => {
     await confirmDestructive(runtime.io, "Delete this attachment?", Boolean(globals(command).yes));
-    const context = await runtime.authenticated();
-    output(runtime, command).data(await removeJourneyAttachment(context, attachmentId));
+    const scope = await runtime.scope(overrides(command), { project: "none" });
+    output(runtime, command).data(await removeJourneyAttachment(scope.context, scope.workspace.slug, attachmentId));
   });
 
   const images = program.command("images").description("Manage issue images");
   images.command("list <issue>").action(async (issueKey: string, _options: unknown, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
     const issue = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
-    output(runtime, command).data(await listIssueImages(scope.context.db, issue.id));
+    output(runtime, command).data(await listIssueImages(scope.context.api, scope.workspace.slug, issue.id));
   });
   images.command("add <issue> <path>").action(async (issueKey: string, path: string, _options: unknown, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
     const issue = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
-    output(runtime, command).data(await uploadJourneyIssueImage(scope.context, scope.workspace.slug, issue.project_id, issue.id, await uploadedFile(path)));
+    output(runtime, command).data(await uploadJourneyIssueImage(scope.context, scope.workspace.slug, issue.id, await uploadedFile(path)));
   });
   images.command("download <image>")
     .option("-o, --output <path>", "output file path")
     .option("--force", "overwrite an existing file")
     .action(async (imageId: string, options: { output?: string; force?: boolean }, command: Command) => {
-      const context = await runtime.authenticated();
-      const image = await context.db.issue_images.get(imageId);
-      const destination = resolve(options.output ?? image.file_name);
+      const scope = await runtime.scope(overrides(command), { project: "none" });
+      const response = await scope.context.api.download(`/workspaces/${encodeURIComponent(scope.workspace.slug)}/images/${encodeURIComponent(imageId)}`);
+      const destination = resolve(options.output ?? responseFileName(response, imageId));
       if (existsSync(destination) && !options.force) throw new CliError(`${destination} already exists; pass --force to overwrite it.`, "file_exists", 2);
-      const bytes = await context.db.storage.from("attachments").downloadArrayBuffer(image.r2_key);
+      const bytes = await response.arrayBuffer();
       await writeFile(destination, Buffer.from(bytes));
       output(runtime, command).data({ path: destination, bytes: bytes.byteLength, imageId });
     });
   images.command("remove <image>").action(async (imageId: string, _options: unknown, command: Command) => {
     await confirmDestructive(runtime.io, "Delete this image?", Boolean(globals(command).yes));
-    const context = await runtime.authenticated();
-    output(runtime, command).data(await removeJourneyIssueImage(context, imageId));
+    const scope = await runtime.scope(overrides(command), { project: "none" });
+    output(runtime, command).data(await removeJourneyIssueImage(scope.context, scope.workspace.slug, imageId));
   });
 
   return program;

@@ -9,16 +9,20 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { AuthTokens, User as AuthUser } from "@loomup/client";
+import type { AuthTokens, AuthUser } from "./api-client.js";
 
 export type StoredCredentials = {
-  version: 1;
-  projectUrl: string;
+  version: 2;
   accessToken: string;
   refreshToken: string;
   tokenType: string;
   expiresIn: number;
   user?: AuthUser;
+};
+
+type LegacyStoredCredentials = Omit<StoredCredentials, "version"> & {
+  version: 1;
+  projectUrl?: string;
 };
 
 export type StoredSelection = {
@@ -70,14 +74,21 @@ export class CliConfigStore {
   }
 
   readCredentials() {
-    const value = readJson<StoredCredentials>(this.credentialsPath);
-    return value?.version === 1 && value.accessToken && value.refreshToken ? value : null;
+    const value = readJson<StoredCredentials | LegacyStoredCredentials>(this.credentialsPath);
+    if (!value || !value.accessToken || !value.refreshToken || (value.version !== 1 && value.version !== 2)) return null;
+    return {
+      version: 2,
+      accessToken: value.accessToken,
+      refreshToken: value.refreshToken,
+      tokenType: value.tokenType,
+      expiresIn: value.expiresIn,
+      ...(value.user ? { user: value.user } : {}),
+    } satisfies StoredCredentials;
   }
 
-  writeTokens(projectUrl: string, tokens: AuthTokens) {
+  writeTokens(tokens: AuthTokens) {
     atomicJson(this.credentialsPath, {
-      version: 1,
-      projectUrl,
+      version: 2,
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
       tokenType: tokens.token_type,

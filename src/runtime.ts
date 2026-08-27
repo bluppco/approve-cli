@@ -1,125 +1,99 @@
-import type { AuthTokens } from "@loomup/client";
-import type { Db, Issues, Projects, User, Workspaces } from "../../astro/src/lib/loomup.generated";
-import { createDb } from "../../astro/src/lib/loomup.generated";
-import type { JourneyContext } from "../../astro/src/lib/auth-client";
 import {
-  listIssuePeople,
+  ApproveApiClient,
+  listDepartments,
   listIssueStatuses,
+  listIssueLabels,
+  listWorkspaceIssues,
   listWorkspaceProjects,
   listWorkspaces,
+  loadEntry,
   loadTeam,
-  seedCurrentProfile,
-  workspaceBySlug,
-} from "../../astro/src/lib/journey-data";
-import { parseIssueRouteId } from "../../astro/src/lib/route-identifiers";
+  type ApiRecord,
+  type ApproveContext,
+  type AuthTokens,
+} from "./api-client.js";
 import { CliConfigStore, type StoredContext, type StoredSelection } from "./config.js";
 import { CliError } from "./errors.js";
 import type { CliIo } from "./io.js";
 
 export type ScopeOverrides = { workspace?: string; project?: string };
-export type ResolvedScope = { context: JourneyContext; workspace: Workspaces; project?: Projects };
+export type ResolvedScope = { context: ApproveContext; workspace: ApiRecord; project?: ApiRecord };
 
 function matches(value: string, ...candidates: Array<string | number | null | undefined>) {
   const normalized = value.toLowerCase();
   return candidates.some((candidate) => candidate != null && String(candidate).toLowerCase() === normalized);
 }
 
-function selection(value: { id: string; slug: string; name: string }): StoredSelection {
+function selection(value: ApiRecord): StoredSelection {
   return { id: String(value.id), slug: value.slug, name: value.name };
 }
 
 export class CliRuntime {
-  private dbValue: Db | null = null;
-  private contextValue: JourneyContext | null = null;
+  private apiValue: ApproveApiClient | null = null;
+  private contextValue: ApproveContext | null = null;
 
   constructor(readonly io: CliIo, readonly store = new CliConfigStore()) {}
 
+  private client(accessToken?: string, refreshToken?: string) {
+    return new ApproveApiClient({ accessToken, refreshToken, onTokens: (tokens) => this.persistTokens(tokens) });
+  }
+
   async login(email: string, password: string) {
-    let db: Db;
-    db = createDb({
-      onTokens: (tokens) => this.persistTokens(db.url, tokens),
-    });
-    const tokens = await db.auth.signIn({ email: email.trim().toLowerCase(), password });
-    this.store.writeTokens(db.url, tokens);
-    this.dbValue = db;
-    this.contextValue = await this.loadContext(db);
+    const api = this.client();
+    const tokens = await api.login(email, password);
+    this.store.writeTokens(tokens);
+    this.apiValue = api;
+    this.contextValue = await this.loadContext(api);
     const workspaces = await listWorkspaces(this.contextValue);
     const current = this.store.readContext();
-    if (!current.workspace && workspaces.length === 1) {
-      const workspace = workspaces[0]!;
-      this.store.writeContext({ version: 1, workspace: selection(workspace) });
-    }
-    return { user: tokens.user ?? await db.auth.me(), workspaces };
+    if (!current.workspace && workspaces.length === 1) this.store.writeContext({ version: 1, workspace: selection(workspaces[0]!) });
+    return { user: tokens.user ?? { id: this.contextValue.profile.id, email: this.contextValue.profile.email }, workspaces };
   }
 
   async authStatus() {
     const context = await this.authenticated();
-    return { user: await context.db.auth.me(), profile: context.profile, context: this.store.readContext() };
+    const credentials = this.store.readCredentials();
+    return { user: credentials?.user ?? { id: context.profile.id, email: context.profile.email }, profile: context.profile, context: this.store.readContext() };
   }
 
   async logout() {
     const credentials = this.store.readCredentials();
-    if (credentials) {
-      const db = createDb({
-        url: credentials.projectUrl,
-        token: credentials.accessToken,
-        refreshToken: credentials.refreshToken,
-        onTokens: (tokens) => this.persistTokens(credentials.projectUrl, tokens),
-      });
-      await db.auth.signOut().catch(() => undefined);
-    }
+    if (credentials) await this.client(credentials.accessToken, credentials.refreshToken).logout();
     this.store.clearCredentials();
-    this.dbValue = null;
+    this.apiValue = null;
     this.contextValue = null;
   }
 
-  private persistTokens(projectUrl: string, tokens: AuthTokens | null) {
-    if (tokens) this.store.writeTokens(projectUrl, tokens);
+  private persistTokens(tokens: AuthTokens | null) {
+    if (tokens) this.store.writeTokens(tokens);
     else this.store.clearCredentials();
   }
 
-  private async loadContext(db: Db): Promise<JourneyContext> {
-    const identity = await db.auth.me();
-    const profile = await db.user.get(identity.id);
-    seedCurrentProfile(db, profile);
-    return { db, profile };
+  private async loadContext(api: ApproveApiClient): Promise<ApproveContext> {
+    const me = await api.get<{ profile: ApiRecord }>("/auth/me");
+    return { api, db: api, profile: me.profile };
   }
 
   async authenticated() {
     if (this.contextValue) return this.contextValue;
     const credentials = this.store.readCredentials();
     if (!credentials) throw new CliError("Run `approve auth login` first.", "unauthenticated", 3);
-    const db = createDb({
-      url: credentials.projectUrl,
-      token: credentials.accessToken,
-      refreshToken: credentials.refreshToken,
-      onTokens: (tokens) => this.persistTokens(credentials.projectUrl, tokens),
-    });
-    this.dbValue = db;
-    this.contextValue = await this.loadContext(db);
+    const api = this.client(credentials.accessToken, credentials.refreshToken);
+    this.apiValue = api;
+    this.contextValue = await this.loadContext(api);
     return this.contextValue;
   }
 
-  close() {
-    this.dbValue?.closeRealtime();
-  }
-
-  storedContext() {
-    return this.store.readContext();
-  }
-
-  clearStoredContext() {
-    this.store.clearContext();
-  }
+  close() {}
+  storedContext() { return this.store.readContext(); }
+  clearStoredContext() { this.store.clearContext(); }
 
   async setStoredContext(input: ScopeOverrides) {
     const context = await this.authenticated();
     const current = this.store.readContext();
     const workspace = input.workspace
       ? await this.resolveWorkspace(context, input.workspace)
-      : current.workspace
-        ? await this.resolveWorkspace(context, current.workspace.id)
-        : null;
+      : current.workspace ? await this.resolveWorkspace(context, current.workspace.id) : null;
     if (!workspace) throw new CliError("--workspace is required when no workspace context is saved.", "workspace_required", 2);
     const project = input.project ? await this.resolveProject(context, workspace, input.project) : undefined;
     const next: StoredContext = { version: 1, workspace: selection(workspace), ...(project ? { project: selection(project) } : {}) };
@@ -140,69 +114,69 @@ export class CliRuntime {
       if (options.project === "required") throw new CliError("Select a project with `approve context set --workspace <slug> --project <slug>` or pass --project.", "project_required", 2);
       return { context, workspace };
     }
-    const project = await this.resolveProject(context, workspace, projectKey);
-    return { context, workspace, project };
+    return { context, workspace, project: await this.resolveProject(context, workspace, projectKey) };
   }
 
-  async resolveWorkspace(context: JourneyContext, key: string) {
+  async resolveWorkspace(context: ApproveContext, key: string): Promise<ApiRecord> {
     const workspaces = await listWorkspaces(context);
     const found = workspaces.find((workspace) => matches(key, workspace.id, workspace.slug));
     if (!found) throw new CliError(`Workspace ${key} was not found or is not accessible.`, "not_found", 5);
-    return workspaceBySlug(context.db, found.slug);
+    const detail = await context.api.get<ApiRecord>(`/workspaces/${encodeURIComponent(found.slug)}`);
+    return { ...detail, role: found.role, isDefault: found.isDefault };
   }
 
-  async resolveProject(context: JourneyContext, workspace: Workspaces, key: string) {
-    const catalog = await listWorkspaceProjects(context.db, workspace.slug, { includeCounts: false });
-    const found = catalog.projects.find((project) => matches(key, project.id, project.slug));
-    if (!found || !found.access.canRead) throw new CliError(`Project ${key} was not found or is not accessible.`, "not_found", 5);
-    return context.db.projects.get(found.id);
+  async resolveProject(context: ApproveContext, workspace: ApiRecord, key: string) {
+    const catalog = await listWorkspaceProjects(context.api, workspace.slug);
+    const found = catalog.projects.find((project: ApiRecord) => matches(key, project.id, project.slug));
+    if (!found || !found.access?.canRead) throw new CliError(`Project ${key} was not found or is not accessible.`, "not_found", 5);
+    return found;
   }
 
-  async resolvePerson(context: JourneyContext, workspace: Workspaces, key: string): Promise<User> {
+  async resolvePerson(context: ApproveContext, workspace: ApiRecord, key: string): Promise<ApiRecord> {
     const normalized = key.replace(/^@/, "").toLowerCase();
-    const people = await listIssuePeople(context.db, workspace.slug);
-    const person = people.find((item) => matches(normalized, item.id, item.handle));
-    if (person) return context.db.user.get(person.id);
-    if (key.includes("@")) {
-      const { data } = await context.db.user.find({ where: { email: key.toLowerCase() }, limit: 1 });
-      if (data[0]) return data[0];
-    }
-    throw new CliError(`Workspace member ${key} was not found.`, "not_found", 5);
+    const members = (await loadTeam(context.api, workspace.slug)).members;
+    const person = members.find((item: ApiRecord) => matches(normalized, item.id, item.handle, item.email));
+    if (!person) throw new CliError(`Workspace member ${key} was not found.`, "not_found", 5);
+    return person;
   }
 
-  async resolveDepartment(context: JourneyContext, workspace: Workspaces, key: string) {
-    const { data } = await context.db.departments.find({ where: { workspace_id: workspace.id }, limit: 200 });
-    const found = data.find((department) => matches(key, department.id, department.name, department.name_key));
+  async resolveDepartment(context: ApproveContext, workspace: ApiRecord, key: string) {
+    const departments = await listDepartments(context.api, workspace.slug);
+    const found = departments.find((department) => matches(key, department.id, department.name));
     if (!found) throw new CliError(`Department ${key} was not found.`, "not_found", 5);
     return found;
   }
 
-  async resolveStatus(context: JourneyContext, workspace: Workspaces, key: string, includeArchived = true) {
-    const statuses = await listIssueStatuses(context.db, workspace.slug, includeArchived);
+  async resolveStatus(context: ApproveContext, workspace: ApiRecord, key: string, includeArchived = true) {
+    const statuses = await listIssueStatuses(context.api, workspace.slug, includeArchived);
     const found = statuses.find((status) => matches(key, status.id, status.name));
     if (!found) throw new CliError(`Status ${key} was not found.`, "not_found", 5);
     return found;
   }
 
-  async resolveIssue(context: JourneyContext, workspace: Workspaces, key: string): Promise<Issues> {
-    const route = parseIssueRouteId(key);
-    let issue: Issues | undefined;
-    if (route && route.prefix === workspace.issue_prefix.toUpperCase()) {
-      issue = (await context.db.issues.find({ where: { workspace_id: workspace.id, issue_number: route.issueNumber }, limit: 1 })).data[0];
-    } else {
-      issue = await context.db.issues.get(key).catch(() => undefined);
-    }
-    if (!issue || String(issue.workspace_id) !== String(workspace.id) || issue.deleted_at) throw new CliError(`Issue ${key} was not found.`, "not_found", 5);
-    return issue;
+  async resolveIssueLabel(context: ApproveContext, workspace: ApiRecord, key: string, includeArchived = true) {
+    const labels = await listIssueLabels(context.api, workspace.slug, includeArchived);
+    const found = labels.find((label) => matches(key, label.id, label.name));
+    if (!found) throw new CliError(`Issue label ${key} was not found.`, "not_found", 5);
+    return found;
   }
 
-  async resolveEntry(context: JourneyContext, workspace: Workspaces, project: Projects, key: string) {
-    const entry = await context.db.timeline_entries.get(key).catch(() => undefined);
-    if (!entry || String(entry.workspace_id) !== String(workspace.id) || String(entry.project_id) !== String(project.id) || entry.deleted_at) throw new CliError(`Entry ${key} was not found.`, "not_found", 5);
+  async resolveIssue(context: ApproveContext, workspace: ApiRecord, key: string): Promise<ApiRecord> {
+    const detail = await context.api.get<ApiRecord>(`/workspaces/${encodeURIComponent(workspace.slug)}/issues/${encodeURIComponent(key)}`).catch(() => null);
+    if (!detail) throw new CliError(`Issue ${key} was not found.`, "not_found", 5);
+    return { ...detail, project_id: detail.projectId, issue_number: detail.issueNumber };
+  }
+
+  async resolveEntry(context: ApproveContext, workspace: ApiRecord, project: ApiRecord, key: string) {
+    const entry = await loadEntry(context.api, workspace.slug, project.id, key).catch(() => null);
+    if (!entry) throw new CliError(`Entry ${key} was not found.`, "not_found", 5);
     return entry;
   }
 
-  async team(workspace: Workspaces) {
-    return loadTeam((await this.authenticated()).db, workspace.slug);
+  async team(workspace: ApiRecord) { return loadTeam((await this.authenticated()).api, workspace.slug); }
+
+  async activeIssueCount(context: ApproveContext, workspace: ApiRecord, statusId: string) {
+    const result = await listWorkspaceIssues(context.api, workspace.slug);
+    return result.issues.filter((issue: ApiRecord) => issue.statusId === statusId).length;
   }
 }

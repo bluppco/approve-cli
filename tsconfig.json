@@ -1,9 +1,12 @@
 {
-  "extends": "../astro/tsconfig.json",
   "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
     "noEmit": true,
-    "types": ["node", "bun-types"],
-    "jsx": "preserve"
+    "types": ["node", "bun-types"]
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]
 }
