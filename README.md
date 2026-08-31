@@ -1,6 +1,6 @@
 # @approve-so/cli
 
-Command-line access to [Approve](https://approve.so) for people and local coding agents.
+Command-line access to [Approve](https://approve.so) for people and local coding agents. See [Approve for agents](https://approve.so/agents) for the product overview or [the getting-started guide](https://approve.so/docs/getting-started) for the complete setup flow.
 
 The CLI connects only to Approve's versioned REST API at `https://approve.so/api/v1`. The API runs in the existing Approve deployment and applies the same account, workspace membership, project-role, and server-enforced access rules as the web application. It does not require a separate API key.
 
@@ -51,6 +51,8 @@ For isolated development or tests, `APPROVE_CONFIG_DIR` changes where credential
 ## Common agent workflows
 
 Human-readable tables are the default. Pass `--json` when another program or agent will consume the result.
+
+The machine-output contract, safety flags, and exit-code guidance are documented at [approve.so/docs/automation](https://approve.so/docs/automation). The complete browser reference is available at [approve.so/docs/cli](https://approve.so/docs/cli).
 
 ```sh
 approve --json issues list --priority urgent

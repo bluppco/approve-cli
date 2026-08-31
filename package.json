@@ -2,6 +2,24 @@
   "name": "@approve-so/cli",
   "version": "0.1.2",
   "description": "Command-line access to Approve for people and local coding agents",
+  "keywords": [
+    "approve",
+    "project-management",
+    "issue-tracker",
+    "release-notes",
+    "changelog",
+    "cli",
+    "automation",
+    "coding-agents"
+  ],
+  "homepage": "https://approve.so/docs/getting-started",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bluppco/approve-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bluppco/approve-cli/issues"
+  },
   "type": "module",
   "bin": {
     "approve": "dist/bin.js"
