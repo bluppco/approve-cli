@@ -21,6 +21,7 @@ import {
   projectScope,
   removeJourneyAttachment,
   removeJourneyIssueImage,
+  removeJourneyIssueAttachment,
   removeJourneyMember,
   removeJourneyProjectRole,
   renameJourneyDepartment,
@@ -38,6 +39,8 @@ import {
   updateJourneyStatus,
   uploadJourneyAttachment,
   uploadJourneyIssueImage,
+  uploadJourneyIssueAttachment,
+  stageJourneyCommentAttachment,
   issueRouteId,
   listComments,
   listDepartments,
@@ -164,7 +167,7 @@ export function createProgram(runtime: CliRuntime) {
   program
     .name("approve")
     .description("Manage Approve from a terminal or local coding agent")
-    .version("0.1.1")
+    .version("0.1.2")
     .option("-w, --workspace <workspace>", "workspace slug or id")
     .option("-p, --project <project>", "project slug or id")
     .option("--json", "emit stable JSON envelopes")
@@ -494,7 +497,8 @@ export function createProgram(runtime: CliRuntime) {
     .addOption(new Option("--priority <priority>").choices([...priorities]).default("normal"))
     .option("--due <date>", "YYYY-MM-DD")
     .option("--image <path>", "image to upload (repeatable)", collect, [])
-    .action(async (title: string, options: { description?: string; descriptionFile?: string; status?: string; assignee?: string; label: string[]; priority: IssuePriority; due?: string; image: string[] }, command: Command) => {
+    .option("--attach <path>", "image, video, or PDF to attach (repeatable)", collect, [])
+    .action(async (title: string, options: { description?: string; descriptionFile?: string; status?: string; assignee?: string; label: string[]; priority: IssuePriority; due?: string; image: string[]; attach: string[] }, command: Command) => {
       const scope = await projectScopeFor(runtime, command);
       const description = await textFromOptions(runtime.io, options.description, options.descriptionFile, "description") ?? "";
       const statusId = options.status ? (await runtime.resolveStatus(scope.context, scope.workspace, options.status, false)).id : undefined;
@@ -503,7 +507,9 @@ export function createProgram(runtime: CliRuntime) {
       const issue = await createJourneyIssue(scope.context, scope.workspace.slug, { projectId: scope.project!.id, title, descriptionMarkdown: description, statusId, assigneeId, labelIds: selectedLabels.map((label) => label.id), priority: asPriority(options.priority), dueDate: options.due });
       const uploaded = [];
       for (const path of options.image) uploaded.push(await uploadJourneyIssueImage(scope.context, scope.workspace.slug, issue.id, await uploadedFile(path)));
-      output(runtime, command).data({ ...issue, publicId: issueRouteId(scope.workspace.issue_prefix, issue.issue_number, issue.id), images: uploaded.map((item) => ({ ...item.image, markdown: item.markdown })) });
+      const attachments = [];
+      for (const path of options.attach) attachments.push(await uploadJourneyIssueAttachment(scope.context, scope.workspace.slug, issue.id, await uploadedFile(path)));
+      output(runtime, command).data({ ...issue, publicId: issueRouteId(scope.workspace.issue_prefix, issue.issue_number, issue.id), images: uploaded.map((item) => ({ ...item.image, markdown: item.markdown })), attachments });
     });
   issues.command("update <issue>")
     .option("--title <title>")
@@ -518,7 +524,8 @@ export function createProgram(runtime: CliRuntime) {
     .option("--due <date>", "YYYY-MM-DD")
     .option("--clear-due")
     .option("--image <path>", "image to upload (repeatable)", collect, [])
-    .action(async (issueKey: string, options: { title?: string; description?: string; descriptionFile?: string; status?: string; assignee?: string; clearAssignee?: boolean; label?: string[]; clearLabels?: boolean; priority?: IssuePriority; due?: string; clearDue?: boolean; image: string[] }, command: Command) => {
+    .option("--attach <path>", "image, video, or PDF to attach (repeatable)", collect, [])
+    .action(async (issueKey: string, options: { title?: string; description?: string; descriptionFile?: string; status?: string; assignee?: string; clearAssignee?: boolean; label?: string[]; clearLabels?: boolean; priority?: IssuePriority; due?: string; clearDue?: boolean; image: string[]; attach: string[] }, command: Command) => {
       if (options.label !== undefined && options.clearLabels) throw new CliError("Pass --label or --clear-labels, not both.", "invalid_input", 2);
       const scope = await runtime.scope(overrides(command), { project: "none" });
       const issue = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
@@ -529,7 +536,9 @@ export function createProgram(runtime: CliRuntime) {
       const updated = await updateJourneyIssue(scope.context, scope.workspace.slug, issue.id, { title: options.title, descriptionMarkdown: description, statusId, assigneeId, labelIds: options.clearLabels ? [] : selectedLabels?.map((label) => label.id), priority: options.priority, dueDate: options.clearDue ? null : options.due });
       const uploaded = [];
       for (const path of options.image) uploaded.push(await uploadJourneyIssueImage(scope.context, scope.workspace.slug, issue.id, await uploadedFile(path)));
-      output(runtime, command).data({ ...updated, publicId: issueRouteId(scope.workspace.issue_prefix, updated.issue_number, updated.id), images: uploaded.map((item) => ({ ...item.image, markdown: item.markdown })) });
+      const attachments = [];
+      for (const path of options.attach) attachments.push(await uploadJourneyIssueAttachment(scope.context, scope.workspace.slug, issue.id, await uploadedFile(path)));
+      output(runtime, command).data({ ...updated, publicId: issueRouteId(scope.workspace.issue_prefix, updated.issue_number, updated.id), images: uploaded.map((item) => ({ ...item.image, markdown: item.markdown })), attachments });
     });
   issues.command("delete <issue>").action(async (issueKey: string, _options: unknown, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
@@ -548,23 +557,34 @@ export function createProgram(runtime: CliRuntime) {
   comments.command("add <issue>")
     .option("--body <markdown>")
     .option("--body-file <path>", "Markdown file, or - for stdin")
-    .action(async (issueKey: string, options: { body?: string; bodyFile?: string }, command: Command) => {
+    .option("--attach <path>", "image, video, or PDF to attach (repeatable)", collect, [])
+    .action(async (issueKey: string, options: { body?: string; bodyFile?: string; attach: string[] }, command: Command) => {
       const scope = await runtime.scope(overrides(command), { project: "none" });
       const issue = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
       const body = await textFromOptions(runtime.io, options.body, options.bodyFile, "body");
-      if (body === undefined) throw new CliError("--body or --body-file is required.", "invalid_input", 2);
-      const result = await createJourneyComment(scope.context, scope.workspace.slug, issue.id, body);
+      if (body === undefined && options.attach.length === 0) throw new CliError("Pass --body, --body-file, or at least one --attach.", "invalid_input", 2);
+      const attachments = [];
+      for (const path of options.attach) attachments.push(await stageJourneyCommentAttachment(scope.context, scope.workspace.slug, issue.id, await uploadedFile(path)));
+      const result = await createJourneyComment(scope.context, scope.workspace.slug, issue.id, body ?? "", attachments);
       if (result.mentionFailures) output(runtime, command).warning("The comment was saved, but one or more mention notifications failed.");
       output(runtime, command).data(result.comment);
     });
   comments.command("update <comment>")
     .option("--body <markdown>")
     .option("--body-file <path>", "Markdown file, or - for stdin")
-    .action(async (commentId: string, options: { body?: string; bodyFile?: string }, command: Command) => {
+    .option("--issue <issue>", "issue key (required with --attach)")
+    .option("--attach <path>", "image, video, or PDF to attach (repeatable)", collect, [])
+    .action(async (commentId: string, options: { body?: string; bodyFile?: string; issue?: string; attach: string[] }, command: Command) => {
       const scope = await runtime.scope(overrides(command), { project: "none" });
       const body = await textFromOptions(runtime.io, options.body, options.bodyFile, "body");
       if (body === undefined) throw new CliError("--body or --body-file is required.", "invalid_input", 2);
-      const result = await updateJourneyComment(scope.context, scope.workspace.slug, commentId, body);
+      if (options.attach.length && !options.issue) throw new CliError("--issue is required when attaching files to an existing comment.", "invalid_input", 2);
+      const attachments = [];
+      if (options.issue) {
+        const issue = await runtime.resolveIssue(scope.context, scope.workspace, options.issue);
+        for (const path of options.attach) attachments.push(await stageJourneyCommentAttachment(scope.context, scope.workspace.slug, issue.id, await uploadedFile(path)));
+      }
+      const result = await updateJourneyComment(scope.context, scope.workspace.slug, commentId, body, attachments);
       if (result.mentionFailures) output(runtime, command).warning("The comment was saved, but one or more mention notifications failed.");
       output(runtime, command).data(result.comment);
     });
@@ -715,6 +735,38 @@ export function createProgram(runtime: CliRuntime) {
     await confirmDestructive(runtime.io, "Delete this image?", Boolean(globals(command).yes));
     const scope = await runtime.scope(overrides(command), { project: "none" });
     output(runtime, command).data(await removeJourneyIssueImage(scope.context, scope.workspace.slug, imageId));
+  });
+
+  const media = program.command("media").description("Manage issue description media");
+  media.command("list <issue>").action(async (issueKey: string, _options: unknown, command: Command) => {
+    const scope = await runtime.scope(overrides(command), { project: "none" });
+    const issue = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
+    const detail = await loadIssue(scope.context.api, scope.workspace.slug, issue.project_id, issue.id);
+    output(runtime, command).data(detail.attachments ?? []);
+  });
+  media.command("add <issue> <path>").action(async (issueKey: string, path: string, _options: unknown, command: Command) => {
+    const scope = await runtime.scope(overrides(command), { project: "none" });
+    const issue = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
+    output(runtime, command).data(await uploadJourneyIssueAttachment(scope.context, scope.workspace.slug, issue.id, await uploadedFile(path)));
+  });
+  media.command("download <issue> <attachment>")
+    .option("-o, --output <path>", "output file path")
+    .option("--force", "overwrite an existing file")
+    .action(async (issueKey: string, attachmentId: string, options: { output?: string; force?: boolean }, command: Command) => {
+      const scope = await runtime.scope(overrides(command), { project: "none" });
+      const issue = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
+      const response = await scope.context.api.download(`/workspaces/${encodeURIComponent(scope.workspace.slug)}/issues/${encodeURIComponent(issue.id)}/attachments/${encodeURIComponent(attachmentId)}`);
+      const destination = resolve(options.output ?? responseFileName(response, attachmentId));
+      if (existsSync(destination) && !options.force) throw new CliError(`${destination} already exists; pass --force to overwrite it.`, "file_exists", 2);
+      const bytes = await response.arrayBuffer();
+      await writeFile(destination, Buffer.from(bytes));
+      output(runtime, command).data({ path: destination, bytes: bytes.byteLength, attachmentId });
+    });
+  media.command("remove <issue> <attachment>").action(async (issueKey: string, attachmentId: string, _options: unknown, command: Command) => {
+    await confirmDestructive(runtime.io, "Remove this issue file?", Boolean(globals(command).yes));
+    const scope = await runtime.scope(overrides(command), { project: "none" });
+    const issue = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
+    output(runtime, command).data(await removeJourneyIssueAttachment(scope.context, scope.workspace.slug, issue.id, attachmentId));
   });
 
   return program;

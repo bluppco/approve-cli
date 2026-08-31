@@ -200,8 +200,9 @@ export const revokeJourneyInvitation = (context: ApproveContext, workspace: stri
 export const createJourneyIssue = (context: ApproveContext, workspace: string, input: ApiRecord) => context.api.post<ApiRecord>(`${wp(workspace)}/issues`, input);
 export const updateJourneyIssue = (context: ApproveContext, workspace: string, issue: string, input: ApiRecord) => context.api.patch<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}`, input);
 export const deleteJourneyIssue = (context: ApproveContext, workspace: string, issue: string) => context.api.delete<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}`);
-export const createJourneyComment = (context: ApproveContext, workspace: string, issue: string, value: string) => context.api.post<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}/comments`, { body: value });
-export const updateJourneyComment = (context: ApproveContext, workspace: string, comment: string, value: string) => context.api.patch<ApiRecord>(`${wp(workspace)}/comments/${s(comment)}`, { body: value });
+export type CommentAttachmentUpload = { path: string; fileName: string };
+export const createJourneyComment = (context: ApproveContext, workspace: string, issue: string, value: string, attachments: CommentAttachmentUpload[] = []) => context.api.post<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}/comments`, { body: value, ...(attachments.length ? { attachments } : {}) });
+export const updateJourneyComment = (context: ApproveContext, workspace: string, comment: string, value: string, attachments: CommentAttachmentUpload[] = []) => context.api.patch<ApiRecord>(`${wp(workspace)}/comments/${s(comment)}`, { body: value, ...(attachments.length ? { attachments } : {}) });
 export const deleteJourneyComment = (context: ApproveContext, workspace: string, comment: string) => context.api.delete<ApiRecord>(`${wp(workspace)}/comments/${s(comment)}`);
 export const createJourneyEntry = (context: ApproveContext, workspace: string, project: string, input: ApiRecord) => context.api.post<ApiRecord>(`${pp(workspace, project)}/entries`, input);
 export const updateJourneyEntry = (context: ApproveContext, workspace: string, project: string, entry: string, input: ApiRecord) => context.api.patch<ApiRecord>(`${pp(workspace, project)}/entries/${s(entry)}`, input);
@@ -214,5 +215,8 @@ export const uploadJourneyAttachment = (context: ApproveContext, workspace: stri
 export const removeJourneyAttachment = (context: ApproveContext, workspace: string, attachment: string) => context.api.delete<ApiRecord>(`${wp(workspace)}/attachments/${s(attachment)}`);
 export const uploadJourneyIssueImage = (context: ApproveContext, workspace: string, issue: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer; type?: string }) => context.api.upload<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}/images`, file);
 export const removeJourneyIssueImage = (context: ApproveContext, workspace: string, image: string) => context.api.delete<ApiRecord>(`${wp(workspace)}/images/${s(image)}`);
+export const uploadJourneyIssueAttachment = (context: ApproveContext, workspace: string, issue: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer; type?: string }) => context.api.upload<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}/attachments`, file);
+export const stageJourneyCommentAttachment = (context: ApproveContext, workspace: string, issue: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer; type?: string }) => context.api.upload<CommentAttachmentUpload>(`${wp(workspace)}/issues/${s(issue)}/comment-attachments`, file);
+export const removeJourneyIssueAttachment = (context: ApproveContext, workspace: string, issue: string, attachment: string) => context.api.delete<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}/attachments/${s(attachment)}`);
 
 export const apiFrom = apiOf;

@@ -37,10 +37,10 @@ async function fixture() {
 describe("CLI program", () => {
   it("exposes every product-level management group", async () => {
     const { program } = await fixture();
-    assert.equal(program.version(), "0.1.1");
+    assert.equal(program.version(), "0.1.2");
     const names = program.commands.map((command) => command.name());
     assert.deepEqual(names, [
-      "auth", "context", "workspaces", "projects", "project-roles", "statuses", "issue-labels", "departments", "members", "invitations", "issues", "comments", "entries", "labels", "attachments", "images",
+      "auth", "context", "workspaces", "projects", "project-roles", "statuses", "issue-labels", "departments", "members", "invitations", "issues", "comments", "entries", "labels", "attachments", "images", "media",
     ]);
   });
 
