@@ -36,6 +36,16 @@ function selection(value: ApiRecord): StoredSelection {
   return { id: String(value.id), slug: value.slug, name: value.name };
 }
 
+function authTokens(credentials: NonNullable<ReturnType<CliConfigStore["readCredentials"]>>): AuthTokens {
+  return {
+    access_token: credentials.accessToken,
+    refresh_token: credentials.refreshToken,
+    token_type: credentials.tokenType,
+    expires_in: credentials.expiresIn,
+    ...(credentials.user ? { user: credentials.user } : {}),
+  };
+}
+
 export class CliRuntime {
   private apiValue: ApproveApiClient | null = null;
   private contextValue: ApproveContext | null = null;
@@ -46,13 +56,34 @@ export class CliRuntime {
     private readonly options: RuntimeOptions = {},
   ) {}
 
-  private client(accessToken?: string, refreshToken?: string) {
+  private client(accessToken?: string, refreshToken?: string, coordinateRefresh = true) {
     return new ApproveApiClient({
       accessToken,
       refreshToken,
       fetcher: this.options.fetcher,
       baseUrl: this.options.baseUrl,
       onTokens: (tokens) => this.persistTokens(tokens),
+      ...(coordinateRefresh
+        ? { coordinateRefresh: (current, performRefresh) => this.store.withCredentialLock(async () => {
+          const stored = this.store.readCredentials();
+          if (!stored) throw new CliError("Run `approve auth login` first.", "unauthenticated", 3);
+          if (stored.accessToken !== current.accessToken || stored.refreshToken !== current.refreshToken) {
+            return authTokens(stored);
+          }
+          try {
+            const tokens = await performRefresh(current.refreshToken);
+            this.store.writeTokens(tokens);
+            return tokens;
+          } catch (error) {
+            const rechecked = this.store.readCredentials();
+            if (rechecked && (rechecked.accessToken !== current.accessToken || rechecked.refreshToken !== current.refreshToken)) {
+              return authTokens(rechecked);
+            }
+            if (error instanceof CliError && error.exitCode === 3) this.store.clearCredentials();
+            throw error;
+          }
+        }) }
+        : {}),
     });
   }
 
@@ -105,9 +136,11 @@ export class CliRuntime {
   }
 
   async logout() {
-    const credentials = this.store.readCredentials();
-    if (credentials) await this.client(credentials.accessToken, credentials.refreshToken).logout();
-    this.store.clearCredentials();
+    await this.store.withCredentialLock(async () => {
+      const credentials = this.store.readCredentials();
+      if (credentials) await this.client(credentials.accessToken, credentials.refreshToken, false).logout();
+      this.store.clearCredentials();
+    });
     this.apiValue = null;
     this.contextValue = null;
   }

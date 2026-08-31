@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { lock } from "proper-lockfile";
 import type { AuthTokens, AuthUser } from "./api-client.js";
 
 export type StoredCredentials = {
@@ -95,6 +96,28 @@ export class CliConfigStore {
       expiresIn: tokens.expires_in,
       ...(tokens.user ? { user: tokens.user } : {}),
     } satisfies StoredCredentials);
+  }
+
+  async withCredentialLock<T>(operation: () => Promise<T>): Promise<T> {
+    mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32") chmodSync(this.directory, 0o700);
+    const release = await lock(this.directory, {
+      realpath: false,
+      stale: 30_000,
+      update: 10_000,
+      retries: {
+        retries: 18,
+        factor: 2,
+        minTimeout: 50,
+        maxTimeout: 1_000,
+        randomize: true,
+      },
+    });
+    try {
+      return await operation();
+    } finally {
+      await release();
+    }
   }
 
   clearCredentials() {

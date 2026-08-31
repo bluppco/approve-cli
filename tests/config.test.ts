@@ -49,4 +49,27 @@ describe("CLI config storage", () => {
     config.clearContext();
     assert.deepEqual(config.readContext(), { version: 1 });
   });
+
+  it("serializes credential operations across store instances", async () => {
+    const config = await store();
+    const second = new CliConfigStore({ ...process.env, APPROVE_CONFIG_DIR: config.directory });
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+    const firstCanFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
+
+    const first = config.withCredentialLock(async () => {
+      order.push("first-start");
+      markFirstStarted();
+      await firstCanFinish;
+      order.push("first-end");
+    });
+    await firstStarted;
+    const later = second.withCredentialLock(async () => { order.push("second"); });
+    releaseFirst();
+    await Promise.all([first, later]);
+
+    assert.deepEqual(order, ["first-start", "first-end", "second"]);
+  });
 });

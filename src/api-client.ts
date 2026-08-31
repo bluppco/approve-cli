@@ -5,6 +5,11 @@ export const DEFAULT_APPROVE_API_URL = "https://approve.so/api/v1";
 export type ApiRecord = Record<string, any>;
 export type AuthUser = { id: string; email: string; [key: string]: unknown };
 export type AuthTokens = { access_token: string; refresh_token: string; token_type: string; expires_in: number; user?: AuthUser };
+export type RefreshSnapshot = { accessToken?: string; refreshToken: string };
+export type RefreshCoordinator = (
+  current: RefreshSnapshot,
+  performRefresh: (refreshToken: string) => Promise<AuthTokens>,
+) => Promise<AuthTokens>;
 export type DeviceAuthorization = {
   device_code: string;
   user_code: string;
@@ -42,6 +47,7 @@ type ClientOptions = {
   onTokens?: (tokens: AuthTokens | null) => void;
   baseUrl?: string;
   fetcher?: typeof fetch;
+  coordinateRefresh?: RefreshCoordinator;
 };
 
 export class ApproveApiClient {
@@ -58,17 +64,37 @@ export class ApproveApiClient {
     this.baseUrl = options.baseUrl ?? approveApiUrl();
   }
 
-  private apply(tokens: AuthTokens) {
+  private apply(tokens: AuthTokens, notify = true) {
     this.accessToken = tokens.access_token;
     this.refreshToken = tokens.refresh_token;
-    this.options.onTokens?.(tokens);
+    if (notify) this.options.onTokens?.(tokens);
+  }
+
+  private requestRefresh(refreshToken: string) {
+    return this.request<AuthTokens>("/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    }, false);
   }
 
   private async refresh() {
     if (!this.refreshToken) throw new CliError("Run `approve auth login` first.", "unauthenticated", 3);
     if (!this.refreshing) {
-      this.refreshing = this.request<AuthTokens>("/auth/refresh", { method: "POST", body: JSON.stringify({ refresh_token: this.refreshToken }) }, false)
-        .then((tokens) => this.apply(tokens))
+      const current = { accessToken: this.accessToken, refreshToken: this.refreshToken };
+      const coordinated = Boolean(this.options.coordinateRefresh);
+      const refresh = this.options.coordinateRefresh
+        ? this.options.coordinateRefresh(current, (refreshToken) => this.requestRefresh(refreshToken))
+        : this.requestRefresh(current.refreshToken);
+      this.refreshing = refresh
+        .then((tokens) => this.apply(tokens, !coordinated))
+        .catch((error) => {
+          if (!coordinated && error instanceof CliError && error.exitCode === 3) {
+            this.accessToken = undefined;
+            this.refreshToken = undefined;
+            this.options.onTokens?.(null);
+          }
+          throw error;
+        })
         .finally(() => { this.refreshing = null; });
     }
     return this.refreshing;

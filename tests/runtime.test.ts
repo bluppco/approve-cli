@@ -75,4 +75,117 @@ describe("CLI browser authentication", () => {
     assert.equal(store.readCredentials()?.refreshToken, "refresh");
     assert.equal(store.readContext().workspace?.slug, "acme");
   });
+
+  it("allows concurrent CLI processes to share one rotated session", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "approve-cli-runtime-"));
+    directories.push(directory);
+    const storeOne = new CliConfigStore({ ...process.env, APPROVE_CONFIG_DIR: directory });
+    const storeTwo = new CliConfigStore({ ...process.env, APPROVE_CONFIG_DIR: directory });
+    storeOne.writeTokens({
+      access_token: "expired-access",
+      refresh_token: "refresh-1",
+      token_type: "Bearer",
+      expires_in: 900,
+    });
+    const io = { stdin: new PassThrough() as unknown as NodeJS.ReadStream, stdout: { write: () => {} }, stderr: { write: () => {} } } satisfies CliIo;
+    let expiredRequests = 0;
+    let refreshRequests = 0;
+    let allowRefresh!: () => void;
+    const bothProcessesReachedApi = new Promise<void>((resolve) => { allowRefresh = resolve; });
+    const refreshedAuthorizations: string[] = [];
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const authorization = new Headers(init?.headers).get("Authorization");
+      if (url.endsWith("/auth/me") && authorization === "Bearer expired-access") {
+        expiredRequests += 1;
+        if (expiredRequests === 2) allowRefresh();
+        return Response.json({ error: { code: "unauthenticated", message: "Expired" } }, { status: 401 });
+      }
+      if (url.endsWith("/auth/refresh")) {
+        refreshRequests += 1;
+        await bothProcessesReachedApi;
+        return Response.json({ data: {
+          access_token: "access-2",
+          refresh_token: "refresh-2",
+          token_type: "Bearer",
+          expires_in: 900,
+        } });
+      }
+      if (url.endsWith("/auth/me")) {
+        refreshedAuthorizations.push(authorization ?? "");
+        return Response.json({ data: { profile: { id: "user-1", email: "person@example.com" } } });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+    const first = new CliRuntime(io, storeOne, { fetcher });
+    const second = new CliRuntime(io, storeTwo, { fetcher });
+
+    await Promise.all([first.authenticated(), second.authenticated()]);
+
+    assert.equal(refreshRequests, 1);
+    assert.deepEqual(refreshedAuthorizations, ["Bearer access-2", "Bearer access-2"]);
+    assert.equal(storeOne.readCredentials()?.accessToken, "access-2");
+    assert.equal(storeTwo.readCredentials()?.refreshToken, "refresh-2");
+  });
+
+  it("keeps credentials after a transient refresh failure", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "approve-cli-runtime-"));
+    directories.push(directory);
+    const store = new CliConfigStore({ ...process.env, APPROVE_CONFIG_DIR: directory });
+    store.writeTokens({ access_token: "expired", refresh_token: "refresh", token_type: "Bearer", expires_in: 900 });
+    const io = { stdin: new PassThrough() as unknown as NodeJS.ReadStream, stdout: { write: () => {} }, stderr: { write: () => {} } } satisfies CliIo;
+    const runtime = new CliRuntime(io, store, {
+      fetcher: (async (input: RequestInfo | URL) => String(input).endsWith("/auth/refresh")
+        ? Response.json({ error: { code: "unavailable", message: "Try again" } }, { status: 503 })
+        : Response.json({ error: { code: "unauthenticated", message: "Expired" } }, { status: 401 })) as typeof fetch,
+    });
+
+    await assert.rejects(runtime.authenticated(), (error: unknown) => (error as { exitCode?: number }).exitCode === 1);
+    assert.equal(store.readCredentials()?.refreshToken, "refresh");
+  });
+
+  it("clears credentials only after a terminal refresh failure", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "approve-cli-runtime-"));
+    directories.push(directory);
+    const store = new CliConfigStore({ ...process.env, APPROVE_CONFIG_DIR: directory });
+    store.writeTokens({ access_token: "expired", refresh_token: "revoked", token_type: "Bearer", expires_in: 900 });
+    const io = { stdin: new PassThrough() as unknown as NodeJS.ReadStream, stdout: { write: () => {} }, stderr: { write: () => {} } } satisfies CliIo;
+    const runtime = new CliRuntime(io, store, {
+      fetcher: (async (input: RequestInfo | URL) => String(input).endsWith("/auth/refresh")
+        ? Response.json({ error: { code: "invalid_token", message: "Revoked" } }, { status: 401 })
+        : Response.json({ error: { code: "unauthenticated", message: "Expired" } }, { status: 401 })) as typeof fetch,
+    });
+
+    await assert.rejects(runtime.authenticated(), (error: unknown) => (error as { exitCode?: number }).exitCode === 3);
+    assert.equal(store.readCredentials(), null);
+  });
+
+  it("can refresh an expired session while logging out under the credential lock", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "approve-cli-runtime-"));
+    directories.push(directory);
+    const store = new CliConfigStore({ ...process.env, APPROVE_CONFIG_DIR: directory });
+    store.writeTokens({ access_token: "expired", refresh_token: "refresh-1", token_type: "Bearer", expires_in: 900 });
+    const io = { stdin: new PassThrough() as unknown as NodeJS.ReadStream, stdout: { write: () => {} }, stderr: { write: () => {} } } satisfies CliIo;
+    let refreshRequests = 0;
+    const runtime = new CliRuntime(io, store, {
+      fetcher: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const authorization = new Headers(init?.headers).get("Authorization");
+        if (url.endsWith("/auth/refresh")) {
+          refreshRequests += 1;
+          return Response.json({ data: { access_token: "access-2", refresh_token: "refresh-2", token_type: "Bearer", expires_in: 900 } });
+        }
+        if (url.endsWith("/auth/logout") && authorization === "Bearer expired") {
+          return Response.json({ error: { code: "unauthenticated", message: "Expired" } }, { status: 401 });
+        }
+        if (url.endsWith("/auth/logout") && authorization === "Bearer access-2") return Response.json({ data: {} });
+        throw new Error(`Unexpected URL: ${url}`);
+      }) as typeof fetch,
+    });
+
+    await runtime.logout();
+
+    assert.equal(refreshRequests, 1);
+    assert.equal(store.readCredentials(), null);
+  });
 });
