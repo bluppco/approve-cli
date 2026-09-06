@@ -103,7 +103,7 @@ export class ApproveApiClient {
   private async response(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
-    if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+    if ((init.body || init.method === "DELETE") && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     if (this.accessToken) headers.set("Authorization", `Bearer ${this.accessToken}`);
     let response: Response;
     try {
@@ -118,15 +118,19 @@ export class ApproveApiClient {
     return response;
   }
 
-  async request<T = ApiRecord>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
+  async requestEnvelope<T = ApiRecord>(path: string, init: RequestInit = {}, retry = true): Promise<{ data: T; meta?: Record<string, unknown> }> {
     const response = await this.response(path, init, retry);
-    const payload = await response.json().catch(() => null) as { data?: T; error?: { code?: string; message?: string; details?: Record<string, unknown> } } | null;
+    const payload = await response.json().catch(() => null) as { data?: T; meta?: Record<string, unknown>; error?: { code?: string; message?: string; details?: Record<string, unknown> } } | null;
     if (!response.ok || !payload || !("data" in payload)) {
       const code = payload?.error?.code ?? (response.status === 401 ? "unauthenticated" : "api_error");
       const exitCode = response.status === 401 ? 3 : response.status === 403 ? 4 : response.status === 404 ? 5 : response.status === 409 ? 6 : response.status < 500 ? 2 : 1;
       throw new CliError(payload?.error?.message ?? `Approve API request failed (${response.status}).`, code, exitCode, payload?.error?.details);
     }
-    return payload.data as T;
+    return { data: payload.data as T, ...(payload.meta ? { meta: payload.meta } : {}) };
+  }
+
+  async request<T = ApiRecord>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
+    return (await this.requestEnvelope<T>(path, init, retry)).data;
   }
 
   get<T = ApiRecord>(path: string) { return this.request<T>(path); }

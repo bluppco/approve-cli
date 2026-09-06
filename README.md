@@ -81,7 +81,7 @@ Run `approve <group> --help` for command-specific flags. The groups are:
 - `workspaces`, `projects`, and `project-roles`
 - `statuses`, `issue-labels`, `departments`, `members`, and `invitations`
 - `issues`, `comments`, `images`, and issue `media`
-- `entries`, `labels`, and `attachments`
+- `documents`, `entries`, `labels`, and `attachments`
 
 Issue labels are workspace-scoped and can be assigned to issues with repeated `--label` flags. Repeated labels on `issues list` match any selected label. On `issues update`, repeated `--label` values replace the full set and `--clear-labels` removes it. The separate `labels` group remains the project-scoped catalog for timeline entries.
 
@@ -136,3 +136,17 @@ npm pack --dry-run
 ```
 
 Before starting a build or test, make sure another matching command is not already running for this package.
+
+## Project documents
+
+Documents are internal to workspace members with project access, even when a project's timeline is public. Project editors/owners and workspace admins/owners can write them. Each document has a title (1–120 characters) and a Markdown body (up to 50,000 characters), with no attachments.
+
+```sh
+approve --json documents list --limit 50
+approve --json documents show "Project brief"
+approve --json documents create "Project brief" --body-file brief.md
+approve --json documents update DOCUMENT_ID --body-file -
+approve --json --yes documents delete DOCUMENT_ID
+```
+
+Lists omit document bodies and return `meta.nextCursor`; pass it to `documents list --cursor`. Commands resolve IDs or exact titles across all pages. Duplicate titles require an ID. Use `--body ""` to clear a body. Updates follow the web app's best-effort conflict behavior: simultaneous saves may overwrite each other. Revision history and native iOS document screens are not included.

@@ -1,3 +1,4 @@
+import { registerDocumentCommands } from "./documents.js";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
@@ -167,7 +168,7 @@ export function createProgram(runtime: CliRuntime) {
   program
     .name("approve")
     .description("Manage Approve from a terminal or local coding agent")
-    .version("0.1.2")
+    .version("0.1.3")
     .option("-w, --workspace <workspace>", "workspace slug or id")
     .option("-p, --project <project>", "project slug or id")
     .option("--json", "emit stable JSON envelopes")
@@ -593,6 +594,8 @@ export function createProgram(runtime: CliRuntime) {
     const scope = await runtime.scope(overrides(command), { project: "none" });
     output(runtime, command).data(await deleteJourneyComment(scope.context, scope.workspace.slug, commentId));
   });
+
+  registerDocumentCommands(program, runtime);
 
   const entries = program.command("entries").description("Manage project timeline entries");
   entries.command("list").action(async (_options: unknown, command: Command) => {

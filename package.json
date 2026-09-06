@@ -1,6 +1,6 @@
 {
   "name": "@approve-so/cli",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Command-line access to Approve for people and local coding agents",
   "keywords": [
     "approve",
