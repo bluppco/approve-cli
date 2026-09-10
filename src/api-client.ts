@@ -19,7 +19,7 @@ export type DeviceAuthorization = {
   interval: number;
 };
 export type ApproveContext = { api: ApproveApiClient; db: ApproveApiClient; profile: ApiRecord };
-export type ProjectScope = "public" | "workspace" | "departments";
+export type ProjectScope = "public" | "workspace" | "departments" | "restricted";
 export type StatusColor = "slate" | "blue" | "amber" | "green" | "red" | "purple" | "pink";
 export type IssueStatusCategory = "backlog" | "unstarted" | "started" | "completed" | "canceled" | "duplicate";
 export type IssuePriority = "low" | "normal" | "high" | "urgent";
@@ -183,7 +183,7 @@ const pp = (workspace: string, project: string) => `${wp(workspace)}/projects/${
 const apiOf = (value: ApproveContext | ApproveApiClient) => value instanceof ApproveApiClient ? value : value.api;
 
 export const issueRouteId = (prefix: string | null | undefined, issueNumber: number | null | undefined, id: string) => issueNumber ? `${(prefix || "ISS").toUpperCase()}-${issueNumber}` : id;
-export const projectScope = (project: ApiRecord): ProjectScope => project.visibility === "public" ? "public" : project.audience === "departments" ? "departments" : "workspace";
+export const projectScope = (project: ApiRecord): ProjectScope => project.visibility === "public" ? "public" : project.audience === "departments" ? "restricted" : "workspace";
 
 export const listWorkspaces = (context: ApproveContext) => context.api.get<ApiRecord[]>("/workspaces");
 export const listWorkspaceProjects = (api: ApproveApiClient, workspace: string) => api.get<ApiRecord>(`${wp(workspace)}/projects`);

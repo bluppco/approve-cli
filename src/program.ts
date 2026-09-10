@@ -92,7 +92,7 @@ function collect(value: string, previous: string[] = []) {
 }
 
 function asProjectScope(value: string): ProjectScope {
-  if (!(["public", "workspace", "departments"] as const).includes(value as ProjectScope)) throw new CliError("Scope must be public, workspace, or departments.", "invalid_input", 2);
+  if (!(["public", "workspace", "restricted", "departments"] as const).includes(value as ProjectScope)) throw new CliError("Scope must be public, workspace, restricted, or departments.", "invalid_input", 2);
   return value as ProjectScope;
 }
 
@@ -151,7 +151,7 @@ function workspaceRow(workspace: ApiRecord) {
 }
 
 function projectRow(project: ApiRecord) {
-  return { slug: project.slug, name: project.name, scope: project.visibility === "public" ? "public" : project.audience === "departments" ? "departments" : "workspace", role: project.role ?? "—", issues: project.unresolvedIssueCount ?? "—", entries: project.entryCount ?? "—", id: project.id };
+  return { slug: project.slug, name: project.name, scope: project.visibility === "public" ? "public" : project.audience === "departments" ? "restricted" : "workspace", role: project.role ?? "—", issues: project.unresolvedIssueCount ?? "—", entries: project.entryCount ?? "—", id: project.id };
 }
 
 function issueRow(issue: ApiRecord) {
@@ -168,7 +168,7 @@ export function createProgram(runtime: CliRuntime) {
   program
     .name("approve")
     .description("Manage Approve from a terminal or local coding agent")
-    .version("0.1.3")
+    .version("0.1.4")
     .option("-w, --workspace <workspace>", "workspace slug or id")
     .option("-p, --project <project>", "project slug or id")
     .option("--json", "emit stable JSON envelopes")
@@ -252,13 +252,13 @@ export function createProgram(runtime: CliRuntime) {
   projects.command("create <name>")
     .option("--summary <summary>", "short project description", "")
     .option("--slug <slug>", "project URL slug")
-    .addOption(new Option("--scope <scope>", "reading audience").choices(["public", "workspace", "departments"]).default("workspace"))
+    .addOption(new Option("--scope <scope>", "reading audience").choices(["public", "workspace", "restricted", "departments"]))
     .option("--department <department>", "department name or id (repeatable)", collect, [])
     .option("--use", "save the new project as the default context")
-    .action(async (name: string, options: { summary: string; slug?: string; scope: string; department: string[]; use?: boolean }, command: Command) => {
+    .action(async (name: string, options: { summary: string; slug?: string; scope?: string; department: string[]; use?: boolean }, command: Command) => {
       const scope = await runtime.scope(overrides(command), { project: "none" });
       const departmentIds = await resolvedDepartments(runtime, scope, options.department);
-      const project = await createJourneyProject(scope.context, scope.workspace.slug, { name, summary: options.summary, slug: options.slug, scope: asProjectScope(options.scope), departmentIds });
+      const project = await createJourneyProject(scope.context, scope.workspace.slug, { name, summary: options.summary, slug: options.slug, scope: options.scope ? asProjectScope(options.scope) : undefined, departmentIds });
       if (options.use) await runtime.setStoredContext({ workspace: scope.workspace.id, project: project.id });
       output(runtime, command).data(project);
     });
@@ -266,7 +266,7 @@ export function createProgram(runtime: CliRuntime) {
     .option("--name <name>", "project name")
     .option("--summary <summary>", "short project description")
     .option("--slug <slug>", "project URL slug")
-    .addOption(new Option("--scope <scope>", "reading audience").choices(["public", "workspace", "departments"]))
+    .addOption(new Option("--scope <scope>", "reading audience").choices(["public", "workspace", "restricted", "departments"]))
     .option("--department <department>", "replace audience departments (repeatable)", collect)
     .action(async (projectKey: string | undefined, options: { name?: string; summary?: string; slug?: string; scope?: string; department?: string[] }, command: Command) => {
       const scope = await projectScopeFor(runtime, command, projectKey);
@@ -282,15 +282,15 @@ export function createProgram(runtime: CliRuntime) {
       output(runtime, command).data(project);
     });
 
-  const roles = program.command("project-roles").description("Manage project owners and editors");
+  const roles = program.command("project-roles").description("Manage project viewers, editors, and owners");
   roles.command("list").action(async (_options: unknown, command: Command) => {
     const scope = await projectScopeFor(runtime, command);
     const settings = await loadProjectSettings(scope.context, scope.workspace.slug, scope.project!.id);
     output(runtime, command).data(settings.members.map((member: ApiRecord) => ({ handle: member.handle, name: member.name, email: member.email, role: member.role, id: member.userId })));
   });
   roles.command("set <member>")
-    .addOption(new Option("--role <role>").choices(["owner", "editor"]).makeOptionMandatory())
-    .action(async (memberKey: string, options: { role: "owner" | "editor" }, command: Command) => {
+    .addOption(new Option("--role <role>").choices(["owner", "editor", "viewer"]).makeOptionMandatory())
+    .action(async (memberKey: string, options: { role: "owner" | "editor" | "viewer" }, command: Command) => {
       const scope = await projectScopeFor(runtime, command);
       const member = await runtime.resolvePerson(scope.context, scope.workspace, memberKey);
       const role = await setJourneyProjectRole(scope.context, scope.workspace.slug, scope.project!.id, member.id, options.role);

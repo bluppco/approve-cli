@@ -132,7 +132,13 @@ export class CliRuntime {
   async authStatus() {
     const context = await this.authenticated();
     const credentials = this.store.readCredentials();
-    return { user: credentials?.user ?? { id: context.profile.id, email: context.profile.email }, profile: context.profile, context: this.store.readContext() };
+    const selected = this.store.readContext();
+    const handles = selected.workspace
+      ? await context.api.get<Array<{ workspace: { id: string; slug: string }; handle: string }>>("/account/handles")
+      : [];
+    const handle = handles.find((row) => row.workspace.id === selected.workspace?.id)?.handle ?? null;
+    const profile: ApiRecord = { ...context.profile, handle };
+    return { user: credentials?.user ?? { id: context.profile.id, email: context.profile.email }, profile, context: selected };
   }
 
   async logout() {

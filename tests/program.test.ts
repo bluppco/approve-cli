@@ -37,11 +37,22 @@ async function fixture() {
 describe("CLI program", () => {
   it("exposes every product-level management group", async () => {
     const { program } = await fixture();
-    assert.equal(program.version(), "0.1.3");
+    assert.equal(program.version(), "0.1.4");
     const names = program.commands.map((command) => command.name());
     assert.deepEqual(names, [
       "auth", "context", "workspaces", "projects", "project-roles", "statuses", "issue-labels", "departments", "members", "invitations", "issues", "comments", "documents", "entries", "labels", "attachments", "images", "media",
     ]);
+  });
+
+  it("inherits project scope and accepts restricted audiences and viewers", async () => {
+    const { program } = await fixture();
+    const projects = program.commands.find(command => command.name() === "projects")!;
+    const create = projects.commands.find(command => command.name() === "create")!;
+    const scope = create.options.find(option => option.long === "--scope")!;
+    assert.equal(scope.defaultValue, undefined);
+    assert.ok(scope.argChoices?.includes("restricted"));
+    const roles = program.commands.find(command => command.name() === "project-roles")!;
+    assert.ok(roles.commands.find(command => command.name() === "set")!.options.find(option => option.long === "--role")!.argChoices?.includes("viewer"));
   });
 
   it("emits saved context through the JSON contract without authenticating", async () => {

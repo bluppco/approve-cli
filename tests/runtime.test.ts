@@ -15,6 +15,29 @@ afterEach(async () => {
 });
 
 describe("CLI browser authentication", () => {
+  it("reports the selected workspace handle instead of the legacy account handle", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "approve-cli-handles-"));
+    directories.push(directory);
+    const store = new CliConfigStore({ ...process.env, APPROVE_CONFIG_DIR: directory });
+    store.writeTokens({ access_token: "access", refresh_token: "refresh", token_type: "Bearer", expires_in: 900 });
+    const io = { stdin: new PassThrough() as unknown as NodeJS.ReadStream, stdout: { write: () => {} }, stderr: { write: () => {} } } satisfies CliIo;
+    const fetcher = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/auth/me")) return Response.json({ data: { profile: { id: "u", email: "mohit@example.com", handle: "legacy" } } });
+      if (url.endsWith("/account/handles")) return Response.json({ data: [
+        { workspace: { id: "one", slug: "one" }, handle: "mohit" },
+        { workspace: { id: "two", slug: "two" }, handle: "mohit1" },
+      ] });
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+    const runtime = new CliRuntime(io, store, { fetcher });
+    assert.equal((await runtime.authStatus()).profile.handle, null);
+    store.writeContext({ version: 1, workspace: { id: "one", slug: "one", name: "One" } });
+    assert.equal((await runtime.authStatus()).profile.handle, "mohit");
+    store.writeContext({ version: 1, workspace: { id: "two", slug: "two", name: "Two" } });
+    assert.equal((await runtime.authStatus()).profile.handle, "mohit1");
+  });
+
   it("opens the approval page, polls, and stores the resulting session", async () => {
     const directory = await mkdtemp(join(tmpdir(), "approve-cli-runtime-"));
     directories.push(directory);

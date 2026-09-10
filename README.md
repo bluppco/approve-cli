@@ -150,3 +150,8 @@ approve --json --yes documents delete DOCUMENT_ID
 ```
 
 Lists omit document bodies and return `meta.nextCursor`; pass it to `documents list --cursor`. Commands resolve IDs or exact titles across all pages. Duplicate titles require an ID. Use `--body ""` to clear a body. Updates follow the web app's best-effort conflict behavior: simultaneous saves may overwrite each other. Revision history and native iOS document screens are not included.
+
+
+### Project sharing defaults
+
+Omit project scope to inherit the workspace's creation default (Restricted unless a workspace owner/admin changes it). Explicit scopes are `restricted`, `workspace`, and `public`; `departments` remains a compatible alias for restricted access. Restricted projects can have selected departments or individual viewer/editor/owner grants, including no departments. Viewers and audience-based readers cannot comment or edit. Workspace owners/admins retain full access. Existing projects keep their audience, and project updates preserve omitted sharing settings.
