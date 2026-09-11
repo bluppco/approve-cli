@@ -161,14 +161,27 @@ export class CliRuntime {
     return { api, db: api, profile: me.profile };
   }
 
-  async authenticated() {
-    if (this.contextValue) return this.contextValue;
+  private authenticatedApi() {
+    if (this.apiValue) return this.apiValue;
     const credentials = this.store.readCredentials();
     if (!credentials) throw new CliError("Run `approve auth login` first.", "unauthenticated", 3);
-    const api = this.client(credentials.accessToken, credentials.refreshToken);
-    this.apiValue = api;
-    this.contextValue = await this.loadContext(api);
+    this.apiValue = this.client(credentials.accessToken, credentials.refreshToken);
+    return this.apiValue;
+  }
+
+  async authenticated() {
+    if (this.contextValue) return this.contextValue;
+    this.contextValue = await this.loadContext(this.authenticatedApi());
     return this.contextValue;
+  }
+
+  async listProjects(overrides: ScopeOverrides) {
+    const api = this.authenticatedApi();
+    const workspaceKey = overrides.workspace ?? this.store.readContext().workspace?.id;
+    if (!workspaceKey) throw new CliError("Select a workspace with `approve context set --workspace <slug>` or pass --workspace.", "workspace_required", 2);
+    // The endpoint resolves both IDs and slugs and enforces workspace access.
+    // Listing projects needs neither a profile nor the workspace's team details.
+    return listWorkspaceProjects(api, workspaceKey);
   }
 
   close() {}

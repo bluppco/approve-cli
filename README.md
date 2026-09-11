@@ -47,6 +47,10 @@ approve auth status
 
 Saved context is global to the user account. Any command can override it with `--workspace` or `--project`.
 
+`projects list` fetches projects in one API request using the workspace ID or slug,
+without loading the profile or workspace details first. Expired sessions still
+refresh automatically before the request is retried.
+
 On a headless machine, print the URL without trying to launch a browser:
 
 ```sh

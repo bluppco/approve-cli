@@ -50,7 +50,6 @@ import {
   listIssueStatuses,
   listProjectLabels,
   listWorkspaceIssues,
-  listWorkspaceProjects,
   listWorkspaces,
   loadEntry,
   loadIssue,
@@ -168,7 +167,7 @@ export function createProgram(runtime: CliRuntime) {
   program
     .name("approve")
     .description("Manage Approve from a terminal or local coding agent")
-    .version("0.1.4")
+    .version("0.1.5")
     .option("-w, --workspace <workspace>", "workspace slug or id")
     .option("-p, --project <project>", "project slug or id")
     .option("--json", "emit stable JSON envelopes")
@@ -240,8 +239,7 @@ export function createProgram(runtime: CliRuntime) {
 
   const projects = program.command("projects").description("Manage projects and their audiences");
   projects.command("list").action(async (_options: unknown, command: Command) => {
-    const scope = await runtime.scope(overrides(command), { project: "none" });
-    const result = await listWorkspaceProjects(scope.context.api, scope.workspace.slug);
+    const result = await runtime.listProjects(overrides(command));
     output(runtime, command).data(globals(command).json ? result.projects : result.projects.filter((project: ApiRecord) => project.access.canRead).map(projectRow));
   });
   projects.command("show [project]").action(async (projectKey: string | undefined, _options: unknown, command: Command) => {
