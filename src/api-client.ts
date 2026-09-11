@@ -203,7 +203,7 @@ export const listWorkspaceIssues = (api: ApproveApiClient, workspace: string, op
   for (const labelId of options.labelIds ?? []) search.append("label", labelId);
   return api.get<ApiRecord>(`${wp(workspace)}/issues${search.size ? `?${search}` : ""}`);
 };
-export const loadIssue = (api: ApproveApiClient, workspace: string, _project: string, issue: string) => api.get<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}`);
+export const loadIssue = (api: ApproveApiClient, workspace: string, _project: string, issue: string, subIssuesCursor?: string) => api.get<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}${subIssuesCursor ? `?subIssuesCursor=${s(subIssuesCursor)}` : ""}`);
 export const listComments = (api: ApproveApiClient, workspace: string, issue: string) => api.get<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}/comments`);
 export const loadProjectTimeline = (context: ApproveContext, workspace: string, project: string) => context.api.get<ApiRecord>(`${pp(workspace, project)}/entries`);
 export const loadEntry = (api: ApproveApiClient, workspace: string, project: string, entry: string) => api.get<ApiRecord>(`${pp(workspace, project)}/entries/${s(entry)}`);

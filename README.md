@@ -1,5 +1,19 @@
 # @approve-so/cli
 
+Issue dependencies support both directions:
+
+```sh
+approve issues dependencies add APP-2 --blocked-by APP-1
+approve issues dependencies add APP-1 --blocks APP-3
+approve issues dependencies list APP-2 --json
+approve issues dependencies remove APP-2 --blocked-by APP-1
+```
+
+Use `--cursor` on dependency lists to continue through `nextCursor` pages.
+Both issues must be editable and in the same workspace. Adds/removals are
+idempotent; circular dependencies are rejected. Issue lists show blocked state,
+and issue details include linked issues with identifiers, titles, statuses, and assignees.
+
 Command-line access to [Approve](https://approve.so) for people and local coding agents. See [Approve for agents](https://approve.so/agents) for the product overview or [the getting-started guide](https://approve.so/docs/getting-started) for the complete setup flow.
 
 The CLI connects only to Approve's versioned REST API at `https://approve.so/api/v1`. The API runs in the existing Approve deployment and applies the same account, workspace membership, project-role, and server-enforced access rules as the web application. It does not require a separate API key.
@@ -155,3 +169,8 @@ Lists omit document bodies and return `meta.nextCursor`; pass it to `documents l
 ### Project sharing defaults
 
 Omit project scope to inherit the workspace's creation default (Restricted unless a workspace owner/admin changes it). Explicit scopes are `restricted`, `workspace`, and `public`; `departments` remains a compatible alias for restricted access. Restricted projects can have selected departments or individual viewer/editor/owner grants, including no departments. Viewers and audience-based readers cannot comment or edit. Workspace owners/admins retain full access. Existing projects keep their audience, and project updates preserve omitted sharing settings.
+
+Create a sub-issue in the selected project with
+`approve issues create "Implement validation" --parent ACME-12`.
+`approve issues show ACME-12` includes its parent and first page of children;
+use `--sub-issues-cursor <cursor>` with the returned `subIssuesNextCursor` for more.

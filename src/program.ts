@@ -155,7 +155,7 @@ function projectRow(project: ApiRecord) {
 }
 
 function issueRow(issue: ApiRecord) {
-  return { key: issue.publicId, title: issue.title, project: issue.project.slug, status: issue.status.name, labels: issue.labels?.map((label: ApiRecord) => label.name).join(", ") || "—", priority: issue.priority, assignee: issue.assignee?.handle ?? "—", due: issue.dueDate ?? "—", updated: issue.updatedAt };
+  return { key: issue.publicId, title: issue.title, project: issue.project.slug, status: issue.status.name, blocked: issue.isBlocked ? `Yes (${issue.unresolvedBlockerCount})` : "No", labels: issue.labels?.map((label: ApiRecord) => label.name).join(", ") || "—", priority: issue.priority, assignee: issue.assignee?.handle ?? "—", due: issue.dueDate ?? "—", updated: issue.updatedAt };
 }
 
 async function resolvedIssueLabels(runtime: CliRuntime, scope: Awaited<ReturnType<CliRuntime["scope"]>>, values: string[] | undefined, includeArchived = false) {
@@ -449,6 +449,31 @@ export function createProgram(runtime: CliRuntime) {
   });
 
   const issues = program.command("issues").description("Manage issues");
+  const dependencies = issues.command("dependencies").description("Manage Blocking and Blocked by relationships");
+  dependencies.command("list <issue>").option("--cursor <cursor>", "next dependency page").action(async (key: string, options: { cursor?: string }, command: Command) => {
+    const scope = await runtime.scope(overrides(command), { project: "none" });
+    const issue = await runtime.resolveIssue(scope.context, scope.workspace, key);
+    const path = `/workspaces/${encodeURIComponent(scope.workspace.slug)}/issues/${encodeURIComponent(issue.id)}/dependencies`;
+    const page = await scope.context.api.get(`${path}${options.cursor ? `?cursor=${encodeURIComponent(options.cursor)}` : ""}`);
+    const rows = globals(command).json ? page.dependencies : page.dependencies.map((row: ApiRecord) => ({
+      relationship: row.direction === "blocks" ? "Blocking" : "Blocked by", key: row.issue?.publicId ?? "Restricted issue",
+      title: row.issue?.title ?? "—", status: row.issue?.status.name ?? "—", assignee: row.issue?.assignee?.name ?? "Unassigned", resolved: row.resolved, id: row.id,
+    }));
+    output(runtime, command).data(rows, { meta: { nextCursor: page.nextCursor, isBlocked: page.isBlocked, unresolvedBlockerCount: page.unresolvedBlockerCount } });
+  });
+  for (const action of ["add", "remove"] as const) dependencies.command(`${action} <issue>`)
+    .option("--blocks <target>", "this issue blocks the target")
+    .option("--blocked-by <target>", "this issue depends on the target")
+    .action(async (key: string, options: { blocks?: string; blockedBy?: string }, command: Command) => {
+      if (Boolean(options.blocks) === Boolean(options.blockedBy)) throw new CliError("Specify exactly one of --blocks or --blocked-by.", "invalid_input", 2);
+      const scope = await runtime.scope(overrides(command), { project: "none" });
+      const issue = await runtime.resolveIssue(scope.context, scope.workspace, key);
+      const target = await runtime.resolveIssue(scope.context, scope.workspace, (options.blocks ?? options.blockedBy)!);
+      const result = await scope.context.api.request(`/workspaces/${encodeURIComponent(scope.workspace.slug)}/issues/${encodeURIComponent(issue.id)}/dependencies`, {
+        method: action === "add" ? "POST" : "DELETE", body: JSON.stringify({ target: target.id, direction: options.blocks ? "blocks" : "blocked-by" }),
+      });
+      output(runtime, command).data(result);
+    });
   issues.command("list")
     .option("--status <status>", "status name or id")
     .option("--category <category>", "status category")
@@ -482,14 +507,15 @@ export function createProgram(runtime: CliRuntime) {
       }).slice(0, options.limit);
       output(runtime, command).data(globals(command).json ? rows : rows.map(issueRow), { meta: { count: rows.length, nextCursor: result.nextCursor } });
     });
-  issues.command("show <issue>").action(async (issueKey: string, _options: unknown, command: Command) => {
+  issues.command("show <issue>").option("--sub-issues-cursor <cursor>", "Load another page of sub-issues").action(async (issueKey: string, options: { subIssuesCursor?: string }, command: Command) => {
     const scope = await runtime.scope(overrides(command), { project: "none" });
     const record = await runtime.resolveIssue(scope.context, scope.workspace, issueKey);
-    const detail = await loadIssue(scope.context.api, scope.workspace.slug, record.project_id, issueKey);
+    const detail = await loadIssue(scope.context.api, scope.workspace.slug, record.project_id, issueKey, options.subIssuesCursor);
     const comments = await listComments(scope.context.api, scope.workspace.slug, record.id);
     output(runtime, command).data({ ...detail, comments: comments.comments });
   });
   issues.command("create <title>")
+    .option("--parent <issue>", "Create a sub-issue of an issue in the same project")
     .option("--description <markdown>")
     .option("--description-file <path>", "Markdown file, or - for stdin")
     .option("--status <status>")
@@ -499,13 +525,14 @@ export function createProgram(runtime: CliRuntime) {
     .option("--due <date>", "YYYY-MM-DD")
     .option("--image <path>", "image to upload (repeatable)", collect, [])
     .option("--attach <path>", "image, video, or PDF to attach (repeatable)", collect, [])
-    .action(async (title: string, options: { description?: string; descriptionFile?: string; status?: string; assignee?: string; label: string[]; priority: IssuePriority; due?: string; image: string[]; attach: string[] }, command: Command) => {
+    .action(async (title: string, options: { parent?: string; description?: string; descriptionFile?: string; status?: string; assignee?: string; label: string[]; priority: IssuePriority; due?: string; image: string[]; attach: string[] }, command: Command) => {
       const scope = await projectScopeFor(runtime, command);
       const description = await textFromOptions(runtime.io, options.description, options.descriptionFile, "description") ?? "";
       const statusId = options.status ? (await runtime.resolveStatus(scope.context, scope.workspace, options.status, false)).id : undefined;
       const assigneeId = options.assignee ? (await runtime.resolvePerson(scope.context, scope.workspace, options.assignee)).id : undefined;
       const selectedLabels = await resolvedIssueLabels(runtime, scope, options.label, false) ?? [];
-      const issue = await createJourneyIssue(scope.context, scope.workspace.slug, { projectId: scope.project!.id, title, descriptionMarkdown: description, statusId, assigneeId, labelIds: selectedLabels.map((label) => label.id), priority: asPriority(options.priority), dueDate: options.due });
+      const parentIssueId = options.parent ? (await runtime.resolveIssue(scope.context, scope.workspace, options.parent)).id : undefined;
+      const issue = await createJourneyIssue(scope.context, scope.workspace.slug, { ...(parentIssueId ? { parentIssueId } : {}), projectId: scope.project!.id, title, descriptionMarkdown: description, statusId, assigneeId, labelIds: selectedLabels.map((label) => label.id), priority: asPriority(options.priority), dueDate: options.due });
       const uploaded = [];
       for (const path of options.image) uploaded.push(await uploadJourneyIssueImage(scope.context, scope.workspace.slug, issue.id, await uploadedFile(path)));
       const attachments = [];

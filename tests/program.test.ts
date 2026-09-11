@@ -31,7 +31,7 @@ async function fixture() {
   const runtime = new CliRuntime(io, store);
   const program = createProgram(runtime);
   program.exitOverride();
-  return { program, store, stdout: () => stdout, stderr: () => stderr };
+  return { program, runtime, store, stdout: () => stdout, stderr: () => stderr };
 }
 
 describe("CLI program", () => {
@@ -64,4 +64,20 @@ describe("CLI program", () => {
     assert.deepEqual(JSON.parse(stdout()), { data: { version: 1, workspace: { id: "w1", slug: "acme", name: "Acme" }, project: { id: "p1", slug: "web", name: "Web" } } });
     assert.equal(stderr(), "");
   });
+});
+
+
+it("dependency commands preserve explicit direction and reject ambiguous flags", async () => {
+  const { program, runtime, stdout } = await fixture();
+  const requests: Array<{ path: string; init: RequestInit }> = [];
+  const api = { request: async (path: string, init: RequestInit) => { requests.push({ path, init }); return { success: true }; } };
+  runtime.scope = async () => ({ workspace: { id: "w1", slug: "acme" }, context: { api } }) as never;
+  runtime.resolveIssue = async (_context, _workspace, key) => ({ id: key === "APP-1" ? "one" : "two" });
+  await program.parseAsync(["node", "approve", "--json", "issues", "dependencies", "add", "APP-1", "--blocked-by", "APP-2"]);
+  assert.equal(requests[0].path, "/workspaces/acme/issues/one/dependencies");
+  assert.equal(requests[0].init.method, "POST");
+  assert.deepEqual(JSON.parse(String(requests[0].init.body)), { target: "two", direction: "blocked-by" });
+  assert.equal(JSON.parse(stdout()).data.success, true);
+  const other = await fixture();
+  await assert.rejects(other.program.parseAsync(["node", "approve", "issues", "dependencies", "remove", "APP-1", "--blocks", "APP-2", "--blocked-by", "APP-3"]), /exactly one/);
 });
