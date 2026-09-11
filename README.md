@@ -99,7 +99,7 @@ Run `approve <group> --help` for command-specific flags. The groups are:
 - `workspaces`, `projects`, and `project-roles`
 - `statuses`, `issue-labels`, `departments`, `members`, and `invitations`
 - `issues`, `comments`, `images`, and issue `media`
-- `documents`, `entries`, `labels`, and `attachments`
+- `documents`, `entries`, `labels`, `attachments`, and `notifications`
 
 Issue labels are workspace-scoped and can be assigned to issues with repeated `--label` flags. Repeated labels on `issues list` match any selected label. On `issues update`, repeated `--label` values replace the full set and `--clear-labels` removes it. The separate `labels` group remains the project-scoped catalog for timeline entries.
 
@@ -178,3 +178,22 @@ Create a sub-issue in the selected project with
 `approve issues create "Implement validation" --parent ACME-12`.
 `approve issues show ACME-12` includes its parent and first page of children;
 use `--sub-issues-cursor <cursor>` with the returned `subIssuesNextCursor` for more.
+
+## Notifications
+
+Use `approve --workspace acme notifications list --state unread` to inspect your
+inbox. Follow `data.nextCursor` with `--cursor` for more pages.
+
+```sh
+approve --workspace acme notifications read <id>
+approve --workspace acme notifications read <id> --unread
+approve --workspace acme notifications read-all
+approve --workspace acme notifications delete <id>
+approve --workspace acme notifications delete-all --read
+approve --workspace acme notifications delete-all
+```
+
+Deletion requires confirmation, or `--yes` for noninteractive use. Bulk actions
+operate on the signed-in user's current notifications in that workspace and
+preserve later arrivals. They are not transactional; inspect the inbox after a
+partial failure before retrying.

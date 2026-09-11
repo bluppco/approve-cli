@@ -1,4 +1,5 @@
 import { registerDocumentCommands } from "./documents.js";
+import { registerNotificationCommands } from "./notifications.js";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
@@ -167,7 +168,7 @@ export function createProgram(runtime: CliRuntime) {
   program
     .name("approve")
     .description("Manage Approve from a terminal or local coding agent")
-    .version("0.1.5")
+    .version("0.1.6")
     .option("-w, --workspace <workspace>", "workspace slug or id")
     .option("-p, --project <project>", "project slug or id")
     .option("--json", "emit stable JSON envelopes")
@@ -621,6 +622,7 @@ export function createProgram(runtime: CliRuntime) {
   });
 
   registerDocumentCommands(program, runtime);
+  registerNotificationCommands(program, runtime);
 
   const entries = program.command("entries").description("Manage project timeline entries");
   entries.command("list").action(async (_options: unknown, command: Command) => {
