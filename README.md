@@ -197,3 +197,17 @@ Deletion requires confirmation, or `--yes` for noninteractive use. Bulk actions
 operate on the signed-in user's current notifications in that workspace and
 preserve later arrivals. They are not transactional; inspect the inbox after a
 partial failure before retrying.
+
+## Project link resources
+
+Projects have a Resources tab for website, GitHub, and other HTTP(S) links. Each link has a required absolute URL and an optional name (up to 120 characters). Unnamed links display the URL. Resources are internal to workspace members who can read the project, including when its timeline is public. Editors, owners, and workspace administrators can add, edit, and remove links.
+
+```sh
+approve --workspace acme --project web resources list
+approve resources create https://github.com/team/repo --name "GitHub repository"
+approve resources show "GitHub repository"
+approve resources update RESOURCE_ID --url https://example.com --name ""
+approve --yes resources delete RESOURCE_ID
+```
+
+Use `--json` for machine output and `--limit`/`--cursor` for pagination (`meta.nextCursor`). Resolve by ID or exact name; duplicate names require an ID. Clearing the name uses `--name ""`. Duplicate URLs are allowed. Removal soft-deletes the resource. Link previews and public publishing are not included.

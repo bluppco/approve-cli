@@ -40,7 +40,7 @@ describe("CLI program", () => {
     assert.equal(program.version(), "0.1.6");
     const names = program.commands.map((command) => command.name());
     assert.deepEqual(names, [
-      "auth", "context", "workspaces", "projects", "project-roles", "statuses", "issue-labels", "departments", "members", "invitations", "issues", "comments", "documents", "notifications", "entries", "labels", "attachments", "images", "media",
+      "auth", "context", "workspaces", "projects", "project-roles", "statuses", "issue-labels", "departments", "members", "invitations", "issues", "comments", "documents", "resources", "notifications", "entries", "labels", "attachments", "images", "media",
     ]);
   });
 

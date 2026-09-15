@@ -1,3 +1,4 @@
+import { registerResourceCommands } from "./resources.js";
 import { registerDocumentCommands } from "./documents.js";
 import { registerNotificationCommands } from "./notifications.js";
 import { existsSync } from "node:fs";
@@ -622,6 +623,7 @@ export function createProgram(runtime: CliRuntime) {
   });
 
   registerDocumentCommands(program, runtime);
+  registerResourceCommands(program, runtime);
   registerNotificationCommands(program, runtime);
 
   const entries = program.command("entries").description("Manage project timeline entries");
