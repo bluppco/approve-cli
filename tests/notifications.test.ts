@@ -11,6 +11,7 @@ function fixture() {
   const api = new ApproveApiClient({ baseUrl: "https://approve.so/api/v1", accessToken: "test", fetcher: (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     calls.push({ path: url.pathname + url.search, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
     return Response.json({ data: { notifications: [{ id: "n" }], total: 2, nextCursor: "1" } });
   }) as typeof fetch });
   const stdin = new PassThrough() as PassThrough & { isTTY?: boolean }; stdin.isTTY = false;
@@ -49,6 +50,7 @@ test("individual and bulk notification deletion require confirmation", async () 
     assert.deepEqual(denied.calls, []);
     const f = fixture(); await f.run("--yes", "notifications", ...args);
     assert.equal(f.calls[0]!.method, "DELETE");
+    assert.equal(f.output().data, null);
     assert.equal(f.calls[0]!.path, `/api/v1/workspaces/my%20workspace/notifications${args[0] === "delete" ? "/n%2F1" : `?mode=${args.includes("--read") ? "read" : "all"}`}`);
   }
 });

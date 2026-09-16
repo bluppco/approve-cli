@@ -120,6 +120,7 @@ export class ApproveApiClient {
 
   async requestEnvelope<T = ApiRecord>(path: string, init: RequestInit = {}, retry = true): Promise<{ data: T; meta?: Record<string, unknown> }> {
     const response = await this.response(path, init, retry);
+    if (response.status === 204) return { data: null as T };
     const payload = await response.json().catch(() => null) as { data?: T; meta?: Record<string, unknown>; error?: { code?: string; message?: string; details?: Record<string, unknown> } } | null;
     if (!response.ok || !payload || !("data" in payload)) {
       const code = payload?.error?.code ?? (response.status === 401 ? "unauthenticated" : "api_error");
