@@ -1,3 +1,4 @@
+import { version } from "../package.json";
 import { registerResourceCommands } from "./resources.js";
 import { registerDocumentCommands } from "./documents.js";
 import { registerNotificationCommands } from "./notifications.js";
@@ -169,7 +170,7 @@ export function createProgram(runtime: CliRuntime) {
   program
     .name("approve")
     .description("Manage Approve from a terminal or local coding agent")
-    .version("0.1.6")
+    .version(version)
     .option("-w, --workspace <workspace>", "workspace slug or id")
     .option("-p, --project <project>", "project slug or id")
     .option("--json", "emit stable JSON envelopes")

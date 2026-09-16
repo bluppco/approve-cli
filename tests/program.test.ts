@@ -1,3 +1,4 @@
+import { version } from "../package.json";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,7 +38,7 @@ async function fixture() {
 describe("CLI program", () => {
   it("exposes every product-level management group", async () => {
     const { program } = await fixture();
-    assert.equal(program.version(), "0.1.6");
+    assert.equal(program.version(), version);
     const names = program.commands.map((command) => command.name());
     assert.deepEqual(names, [
       "auth", "context", "workspaces", "projects", "project-roles", "statuses", "issue-labels", "departments", "members", "invitations", "issues", "comments", "documents", "resources", "notifications", "entries", "labels", "attachments", "images", "media",
