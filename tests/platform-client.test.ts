@@ -97,3 +97,34 @@ describe("Approve API transport", () => {
     });
   });
 });
+
+it("uploads large files with bounded chunks and retries a lost response", async () => {
+  const size = 8 * 1024 * 1024 + 3;
+  const chunks: number[] = [];
+  let dropped = false;
+  let complete = false;
+  const client = new ApproveApiClient({
+    accessToken: "access",
+    fetcher: (async (input, init) => {
+      const url = new URL(String(input));
+      const action = url.searchParams.get("upload");
+      assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer access");
+      if (action === "start") {
+        assert.equal(JSON.parse(String(init?.body)).size, size);
+        return Response.json({ data: { id: "session" } });
+      }
+      if (action === "chunk") {
+        const chunk = init?.body as Blob;
+        chunks.push(chunk.size);
+        if (!dropped) { dropped = true; throw new TypeError("lost response"); }
+        return Response.json({ data: { offset: Number(url.searchParams.get("offset")) + chunk.size } });
+      }
+      assert.equal(action, "complete"); complete = true;
+      return Response.json({ data: { id: "attachment" } });
+    }) as typeof fetch,
+  });
+  const result = await client.upload("/workspaces/work/issues/issue/attachments", { name: "large.mp4", bytes: new Blob([new Uint8Array(size)]), type: "video/mp4" });
+  assert.equal(result.id, "attachment");
+  assert.equal(complete, true);
+  assert.deepEqual(chunks, [8 * 1024 * 1024, 8 * 1024 * 1024, 3]);
+});

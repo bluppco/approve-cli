@@ -1,9 +1,13 @@
+import { stat, rename, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { version } from "../package.json";
 import { registerResourceCommands } from "./resources.js";
 import { registerDocumentCommands } from "./documents.js";
 import { registerNotificationCommands } from "./notifications.js";
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { openAsBlob, createWriteStream } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { basename, resolve } from "node:path";
 import { Command, Option } from "commander";
 import {
@@ -131,7 +135,21 @@ function labels(values: string[] | undefined): ProjectLabel[] | undefined {
 
 async function uploadedFile(path: string) {
   const absolute = resolve(path);
-  return { name: basename(absolute), bytes: await readFile(absolute) };
+  return { name: basename(absolute), bytes: await openAsBlob(absolute) };
+}
+
+async function saveDownload(response: Response, destination: string) {
+  if (!response.body) throw new CliError("Empty download response.", "download_failed", 1);
+  const temporary = `${destination}.${randomUUID()}.part`;
+  try {
+    await pipeline(Readable.fromWeb(response.body as unknown as import("node:stream/web").ReadableStream), createWriteStream(temporary, { flags: "wx", mode: 0o600 }));
+    const size = (await stat(temporary)).size;
+    await rename(temporary, destination);
+    return size;
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 function responseFileName(response: Response, fallback: string) {
@@ -731,9 +749,8 @@ export function createProgram(runtime: CliRuntime) {
       const response = await scope.context.api.download(`/workspaces/${encodeURIComponent(scope.workspace.slug)}/attachments/${encodeURIComponent(attachmentId)}`);
       const destination = resolve(options.output ?? responseFileName(response, attachmentId));
       if (existsSync(destination) && !options.force) throw new CliError(`${destination} already exists; pass --force to overwrite it.`, "file_exists", 2);
-      const bytes = await response.arrayBuffer();
-      await writeFile(destination, Buffer.from(bytes));
-      output(runtime, command).data({ path: destination, bytes: bytes.byteLength, attachmentId });
+      const bytes = await saveDownload(response, destination);
+      output(runtime, command).data({ path: destination, bytes, attachmentId });
     });
   attachments.command("remove <attachment>").action(async (attachmentId: string, _options: unknown, command: Command) => {
     await confirmDestructive(runtime.io, "Delete this attachment?", Boolean(globals(command).yes));
@@ -760,9 +777,8 @@ export function createProgram(runtime: CliRuntime) {
       const response = await scope.context.api.download(`/workspaces/${encodeURIComponent(scope.workspace.slug)}/images/${encodeURIComponent(imageId)}`);
       const destination = resolve(options.output ?? responseFileName(response, imageId));
       if (existsSync(destination) && !options.force) throw new CliError(`${destination} already exists; pass --force to overwrite it.`, "file_exists", 2);
-      const bytes = await response.arrayBuffer();
-      await writeFile(destination, Buffer.from(bytes));
-      output(runtime, command).data({ path: destination, bytes: bytes.byteLength, imageId });
+      const bytes = await saveDownload(response, destination);
+      output(runtime, command).data({ path: destination, bytes, imageId });
     });
   images.command("remove <image>").action(async (imageId: string, _options: unknown, command: Command) => {
     await confirmDestructive(runtime.io, "Delete this image?", Boolean(globals(command).yes));
@@ -791,9 +807,8 @@ export function createProgram(runtime: CliRuntime) {
       const response = await scope.context.api.download(`/workspaces/${encodeURIComponent(scope.workspace.slug)}/issues/${encodeURIComponent(issue.id)}/attachments/${encodeURIComponent(attachmentId)}`);
       const destination = resolve(options.output ?? responseFileName(response, attachmentId));
       if (existsSync(destination) && !options.force) throw new CliError(`${destination} already exists; pass --force to overwrite it.`, "file_exists", 2);
-      const bytes = await response.arrayBuffer();
-      await writeFile(destination, Buffer.from(bytes));
-      output(runtime, command).data({ path: destination, bytes: bytes.byteLength, attachmentId });
+      const bytes = await saveDownload(response, destination);
+      output(runtime, command).data({ path: destination, bytes, attachmentId });
     });
   media.command("remove <issue> <attachment>").action(async (issueKey: string, attachmentId: string, _options: unknown, command: Command) => {
     await confirmDestructive(runtime.io, "Remove this issue file?", Boolean(globals(command).yes));

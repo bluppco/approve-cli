@@ -105,7 +105,7 @@ Issue labels are workspace-scoped and can be assigned to issues with repeated `-
 
 Issue and timeline-entry deletion is soft deletion, matching the web product. Approve does not currently expose workspace or project deletion.
 
-Issue descriptions and comments accept repeated `--attach` flags for JPEG, PNG, WebP, GIF, AVIF, PDF, MP4, WebM, MOV, M4V, and OGV files up to 25 MB each. Use `approve media` to list, add, download, or remove issue-description media. The legacy `--image` and `images` commands remain available.
+Issue descriptions and comments accept repeated `--attach` flags for JPEG, PNG, WebP, GIF, AVIF, PDF, MP4, WebM, MOV, M4V, and OGV files up to 1 GB each. Use `approve media` to list, add, download, or remove issue-description media. The legacy `--image` and `images` commands remain available.
 
 Destructive commands prompt when attached to a terminal. Agents and other non-interactive callers must explicitly pass `--yes`:
 

@@ -140,12 +140,40 @@ export class ApproveApiClient {
   patch<T = ApiRecord>(path: string, value?: unknown) { return this.request<T>(path, { method: "PATCH", body: value === undefined ? undefined : JSON.stringify(value) }); }
   delete<T = ApiRecord>(path: string) { return this.request<T>(path, { method: "DELETE" }); }
 
-  async upload<T = ApiRecord>(path: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer; type?: string }) {
-    return this.request<T>(path, {
-      method: "POST",
-      headers: { "Content-Type": file.type || "application/octet-stream", "X-Approve-Filename": file.name },
-      body: file.bytes as BodyInit,
+  async upload<T = ApiRecord>(path: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer | Blob; type?: string }) {
+    const size = file.bytes instanceof Blob ? file.bytes.size : file.bytes.byteLength;
+    if (size <= 0 || size > 1024 * 1024 * 1024) throw new CliError("Files must be between 1 byte and 1 GB.", "invalid_input", 2);
+    const headers = { "X-Approve-Filename": encodeURIComponent(file.name) };
+    const chunkSize = 8 * 1024 * 1024;
+    if (size <= chunkSize) return this.request<T>(path, {
+      method: "POST", headers: { ...headers, "Content-Type": file.type || "application/octet-stream" }, body: file.bytes as BodyInit,
     });
+    const body = file.bytes instanceof Blob ? file.bytes : new Blob([file.bytes as BlobPart]);
+    const session = await this.request<{ id: string }>(`${path}?upload=start`, {
+      method: "POST", headers, body: JSON.stringify({ size, type: file.type }),
+    });
+    const endpoint = `${path}?id=${encodeURIComponent(session.id)}`;
+    const retry = async <R>(operation: () => Promise<R>): Promise<R> => {
+      for (let attempt = 0; ; attempt++) {
+        try { return await operation(); } catch (error) {
+          if (attempt >= 2 || (error instanceof CliError && error.exitCode !== 1)) throw error;
+          await new Promise(resolve => setTimeout(resolve, 250 * 2 ** attempt));
+        }
+      }
+    };
+    try {
+      for (let offset = 0; offset < size; offset += chunkSize) {
+        const end = Math.min(offset + chunkSize, size);
+        const result = await retry(() => this.request<{ offset: number }>(`${endpoint}&upload=chunk&offset=${offset}`, {
+          method: "POST", headers: { ...headers, "Content-Type": "application/octet-stream" }, body: body.slice(offset, end),
+        }));
+        if (result.offset !== end) throw new CliError("Unexpected upload offset.", "upload_failed", 1);
+      }
+      return await retry(() => this.request<T>(`${endpoint}&upload=complete`, { method: "POST", headers }));
+    } catch (error) {
+      await this.request(`${endpoint}&upload=abort`, { method: "POST", headers }).catch(() => undefined);
+      throw error;
+    }
   }
 
   async download(path: string) {
@@ -242,12 +270,12 @@ export const deleteJourneyEntry = (context: ApproveContext, workspace: string, p
 export const createJourneyLabel = (context: ApproveContext, workspace: string, project: string, label: string) => context.api.post<ApiRecord>(`${pp(workspace, project)}/labels`, { label });
 export const renameJourneyLabel = (context: ApproveContext, workspace: string, project: string, tag: string, label: string) => context.api.patch<ApiRecord>(`${pp(workspace, project)}/labels/${s(tag)}`, { label });
 export const deleteJourneyLabel = (context: ApproveContext, workspace: string, project: string, tag: string) => context.api.delete<ApiRecord>(`${pp(workspace, project)}/labels/${s(tag)}`);
-export const uploadJourneyAttachment = (context: ApproveContext, workspace: string, project: string, entry: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer; type?: string }) => context.api.upload<ApiRecord>(`${pp(workspace, project)}/entries/${s(entry)}/attachments`, file);
+export const uploadJourneyAttachment = (context: ApproveContext, workspace: string, project: string, entry: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer | Blob; type?: string }) => context.api.upload<ApiRecord>(`${pp(workspace, project)}/entries/${s(entry)}/attachments`, file);
 export const removeJourneyAttachment = (context: ApproveContext, workspace: string, attachment: string) => context.api.delete<ApiRecord>(`${wp(workspace)}/attachments/${s(attachment)}`);
-export const uploadJourneyIssueImage = (context: ApproveContext, workspace: string, issue: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer; type?: string }) => context.api.upload<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}/images`, file);
+export const uploadJourneyIssueImage = (context: ApproveContext, workspace: string, issue: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer | Blob; type?: string }) => context.api.upload<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}/images`, file);
 export const removeJourneyIssueImage = (context: ApproveContext, workspace: string, image: string) => context.api.delete<ApiRecord>(`${wp(workspace)}/images/${s(image)}`);
-export const uploadJourneyIssueAttachment = (context: ApproveContext, workspace: string, issue: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer; type?: string }) => context.api.upload<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}/attachments`, file);
-export const stageJourneyCommentAttachment = (context: ApproveContext, workspace: string, issue: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer; type?: string }) => context.api.upload<CommentAttachmentUpload>(`${wp(workspace)}/issues/${s(issue)}/comment-attachments`, file);
+export const uploadJourneyIssueAttachment = (context: ApproveContext, workspace: string, issue: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer | Blob; type?: string }) => context.api.upload<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}/attachments`, file);
+export const stageJourneyCommentAttachment = (context: ApproveContext, workspace: string, issue: string, file: { name: string; bytes: ArrayBufferView | ArrayBuffer | Blob; type?: string }) => context.api.upload<CommentAttachmentUpload>(`${wp(workspace)}/issues/${s(issue)}/comment-attachments`, file);
 export const removeJourneyIssueAttachment = (context: ApproveContext, workspace: string, issue: string, attachment: string) => context.api.delete<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}/attachments/${s(attachment)}`);
 
 export const apiFrom = apiOf;
