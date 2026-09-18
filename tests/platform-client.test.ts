@@ -120,6 +120,7 @@ it("uploads large files with bounded chunks and retries a lost response", async 
         return Response.json({ data: { offset: Number(url.searchParams.get("offset")) + chunk.size } });
       }
       assert.equal(action, "complete"); complete = true;
+      assert.equal(new Headers(init?.headers).get("Content-Type"), "application/json", "bodyless completion must pass the API origin check");
       return Response.json({ data: { id: "attachment" } });
     }) as typeof fetch,
   });
@@ -127,4 +128,22 @@ it("uploads large files with bounded chunks and retries a lost response", async 
   assert.equal(result.id, "attachment");
   assert.equal(complete, true);
   assert.deepEqual(chunks, [8 * 1024 * 1024, 8 * 1024 * 1024, 3]);
+});
+
+it("can abort a failed upload through the API origin check", async () => {
+  let aborted = false;
+  const client = new ApproveApiClient({
+    accessToken: "access",
+    fetcher: (async (input, init) => {
+      const action = new URL(String(input)).searchParams.get("upload");
+      if (action === "start") return Response.json({ data: { id: "session" } });
+      if (action === "chunk") return Response.json({ error: { code: "forbidden", message: "Permission removed" } }, { status: 403 });
+      assert.equal(action, "abort");
+      assert.equal(new Headers(init?.headers).get("Content-Type"), "application/json", "bodyless abort must pass the API origin check");
+      aborted = true;
+      return Response.json({ data: { id: "session" } });
+    }) as typeof fetch,
+  });
+  await assert.rejects(client.upload("/workspaces/work/issues/issue/attachments", { name: "large.txt", bytes: new Blob([new Uint8Array(8 * 1024 * 1024 + 1)]) }), /Permission removed/);
+  assert.equal(aborted, true);
 });

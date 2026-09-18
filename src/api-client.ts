@@ -103,7 +103,7 @@ export class ApproveApiClient {
   private async response(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
-    if ((init.body || init.method === "DELETE") && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+    if ((init.body || ["POST", "PUT", "PATCH", "DELETE"].includes(init.method ?? "")) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     if (this.accessToken) headers.set("Authorization", `Bearer ${this.accessToken}`);
     let response: Response;
     try {
