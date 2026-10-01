@@ -500,30 +500,21 @@ export function createProgram(runtime: CliRuntime) {
     .option("--label <label>", "issue label name or id (repeatable, matches any)", collect, [])
     .addOption(new Option("--priority <priority>").choices([...priorities]))
     .option("--due <due>", "overdue, today, week, none, or YYYY-MM-DD")
-    .option("--limit <limit>", "maximum rows", asPositiveInteger, 200)
-    .action(async (options: { status?: string; category?: string; assignee?: string; label: string[]; priority?: IssuePriority; due?: string; limit: number }, command: Command) => {
+    .option("--limit <limit>", "page size (1–200)", asPositiveInteger, 200)
+    .option("--cursor <cursor>", "continue the same filtered issue list")
+    .action(async (options: { status?: string; category?: string; assignee?: string; label: string[]; priority?: IssuePriority; due?: string; limit: number; cursor?: string }, command: Command) => {
+      if (options.limit > 200) throw new CliError("Limit must be between 1 and 200.", "invalid_input", 2);
       const scope = await runtime.scope(overrides(command), { project: "optional" });
       const selectedLabels = await resolvedIssueLabels(runtime, scope, options.label, false) ?? [];
+      const status = options.status ? await runtime.resolveStatus(scope.context, scope.workspace, options.status) : undefined;
+      const assignee = options.assignee ? await runtime.resolvePerson(scope.context, scope.workspace, options.assignee) : undefined;
       const result = await listWorkspaceIssues(scope.context.api, scope.workspace.slug, {
         projectSlug: scope.project?.slug,
         labelIds: selectedLabels.map((label) => label.id),
+        statusId: status?.id, category: options.category, assigneeId: assignee?.id,
+        priority: options.priority, due: options.due, limit: options.limit, cursor: options.cursor,
       });
-      const status = options.status ? await runtime.resolveStatus(scope.context, scope.workspace, options.status) : undefined;
-      const assignee = options.assignee ? await runtime.resolvePerson(scope.context, scope.workspace, options.assignee) : undefined;
-      const today = new Date().toISOString().slice(0, 10);
-      const week = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-      const rows = result.issues.filter((issue: ApiRecord) => {
-        if (status && issue.statusId !== status.id) return false;
-        if (options.category && issue.status.category !== options.category) return false;
-        if (assignee && issue.assigneeId !== assignee.id) return false;
-        if (options.priority && issue.priority !== options.priority) return false;
-        if (options.due === "none" && issue.dueDate) return false;
-        if (options.due === "overdue" && (!issue.dueDate || issue.dueDate >= today)) return false;
-        if (options.due === "today" && issue.dueDate !== today) return false;
-        if (options.due === "week" && (!issue.dueDate || issue.dueDate < today || issue.dueDate >= week)) return false;
-        if (options.due && !["none", "overdue", "today", "week"].includes(options.due) && issue.dueDate !== options.due) return false;
-        return true;
-      }).slice(0, options.limit);
+      const rows: ApiRecord[] = result.issues;
       output(runtime, command).data(globals(command).json ? rows : rows.map(issueRow), { meta: { count: rows.length, nextCursor: result.nextCursor } });
     });
   issues.command("show <issue>").option("--sub-issues-cursor <cursor>", "Load another page of sub-issues").action(async (issueKey: string, options: { subIssuesCursor?: string }, command: Command) => {

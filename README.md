@@ -103,6 +103,12 @@ Run `approve <group> --help` for command-specific flags. The groups are:
 
 Issue labels are workspace-scoped and can be assigned to issues with repeated `--label` flags. Repeated labels on `issues list` match any selected label. On `issues update`, repeated `--label` values replace the full set and `--clear-labels` removes it. The separate `labels` group remains the project-scoped catalog for timeline entries.
 
+`issues list` applies filters on the server before pagination, so older matching
+issues are included. `--limit` sets a page size from 1 to 200 (default 200).
+Continue with `--cursor` using `meta.nextCursor` and the same workspace, project,
+and filters. Date filters use UTC calendar days. Pages read current data rather
+than a frozen snapshot; concurrent edits can shift results between pages.
+
 Issue and timeline-entry deletion is soft deletion, matching the web product. Approve does not currently expose workspace or project deletion.
 
 Issue descriptions and comments accept repeated `--attach` flags for JPEG, PNG, WebP, GIF, AVIF, PDF, MP4, WebM, MOV, M4V, and OGV files up to 1 GB each. Use `approve media` to list, add, download, or remove issue-description media. The legacy `--image` and `images` commands remain available.

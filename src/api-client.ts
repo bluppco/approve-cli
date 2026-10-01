@@ -226,10 +226,13 @@ export async function loadTeam(api: ApproveApiClient, workspace: string) {
   ]);
   return { workspace: { role: detail.role }, members, departments, pendingInvitations };
 }
-export const listWorkspaceIssues = (api: ApproveApiClient, workspace: string, options: { projectSlug?: string; labelIds?: string[] } = {}) => {
+export const listWorkspaceIssues = (api: ApproveApiClient, workspace: string, options: { projectSlug?: string; labelIds?: string[]; statusId?: string; category?: string; assigneeId?: string; priority?: IssuePriority; due?: string; limit?: number; cursor?: string } = {}) => {
   const search = new URLSearchParams();
   if (options.projectSlug) search.set("project", options.projectSlug);
   for (const labelId of options.labelIds ?? []) search.append("label", labelId);
+  for (const [key, value] of Object.entries({ status: options.statusId, category: options.category, assignee: options.assigneeId, priority: options.priority, due: options.due, limit: options.limit, cursor: options.cursor })) {
+    if (value !== undefined) search.set(key, String(value));
+  }
   return api.get<ApiRecord>(`${wp(workspace)}/issues${search.size ? `?${search}` : ""}`);
 };
 export const loadIssue = (api: ApproveApiClient, workspace: string, _project: string, issue: string, subIssuesCursor?: string) => api.get<ApiRecord>(`${wp(workspace)}/issues/${s(issue)}${subIssuesCursor ? `?subIssuesCursor=${s(subIssuesCursor)}` : ""}`);
