@@ -185,6 +185,26 @@ Create a sub-issue in the selected project with
 `approve issues show ACME-12` includes its parent and first page of children;
 use `--sub-issues-cursor <cursor>` with the returned `subIssuesNextCursor` for more.
 
+Unlink a child using `approve issues remove-parent ACME-12`. This preserves both
+issues, their content, and descendants, requires edit access to the child, and
+works when the parent is deleted or unavailable. No `--yes` is needed. Read/auth
+failures are preserved; a changed parent/project returns conflict (exit 6).
+After an uncertain write result, the error includes an exact retry command and,
+with `--json`, `error.details.retry` containing `workspace`, child `issue`,
+`expectedParentIssueId`, `expectedProjectId`, and `operationId`. Reuse them:
+
+```sh
+approve --workspace acme issues remove-parent CHILD_ID \
+  --expected-parent-id ORIGINAL_PARENT_ID \
+  --expected-project-id ORIGINAL_PROJECT_ID \
+  --operation-id ORIGINAL_OPERATION_ID
+```
+
+All three replay flags are required together. Keep their original values even
+when the child is already detached; the backend rechecks current permission
+before replaying its receipt. Creating a fresh operation after a lost response
+cannot replay the original result. Arbitrary reparenting is not supported.
+
 ## Notifications
 
 Use `approve --workspace acme notifications list --state unread` to inspect your

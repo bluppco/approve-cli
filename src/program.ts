@@ -73,6 +73,7 @@ import {
 import { CliError } from "./errors.js";
 import { CliOutput, confirmDestructive, textFromOptions } from "./io.js";
 import { CliRuntime, type ScopeOverrides } from "./runtime.js";
+import { removeIssueParent, validateParentRemovalOptions, type ParentRemovalOptions } from "./issue-parent-removal.js";
 
 type GlobalOptions = ScopeOverrides & { json?: boolean; yes?: boolean; noColor?: boolean };
 
@@ -524,6 +525,16 @@ export function createProgram(runtime: CliRuntime) {
     const comments = await listComments(scope.context.api, scope.workspace.slug, record.id);
     output(runtime, command).data({ ...detail, comments: comments.comments });
   });
+  issues.command("remove-parent <issue>")
+    .description("Unlink an issue from its parent, preserving both issues and their contents")
+    .option("--expected-parent-id <id>", "Original parent row ID (supply all three retry flags together)")
+    .option("--expected-project-id <id>", "Original project row ID for replay")
+    .option("--operation-id <id>", "Original operation ID for replay after an uncertain result")
+    .action(async (issueKey: string, options: ParentRemovalOptions, command: Command) => {
+      validateParentRemovalOptions(options);
+      const scope = await runtime.scope(overrides(command), { project: "none" });
+      output(runtime, command).data(await removeIssueParent(scope.context.api, scope.workspace.slug, issueKey, options));
+    });
   issues.command("create <title>")
     .option("--parent <issue>", "Create a sub-issue of an issue in the same project")
     .option("--description <markdown>")

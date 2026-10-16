@@ -56,7 +56,7 @@ export class CliOutput {
     this.io.stderr.write(`Warning: ${message}\n`);
   }
 
-  error(error: { code: string; message: string }) {
+  error(error: { code: string; message: string; details?: Record<string, unknown> }) {
     this.io.stderr.write(this.json ? `${JSON.stringify({ error })}\n` : `Error: ${error.message}\n`);
   }
 }

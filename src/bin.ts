@@ -20,7 +20,7 @@ export async function main(argv = process.argv) {
     }
     const error = normalizeCliError(caught);
     const options = program.opts() as { json?: boolean };
-    new CliOutput(processIo, Boolean(options.json)).error({ code: error.code, message: error.message });
+    new CliOutput(processIo, Boolean(options.json)).error({ code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) });
     return error.exitCode;
   } finally {
     runtime.close();

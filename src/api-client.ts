@@ -125,7 +125,9 @@ export class ApproveApiClient {
     if (!response.ok || !payload || !("data" in payload)) {
       const code = payload?.error?.code ?? (response.status === 401 ? "unauthenticated" : "api_error");
       const exitCode = response.status === 401 ? 3 : response.status === 403 ? 4 : response.status === 404 ? 5 : response.status === 409 ? 6 : response.status < 500 ? 2 : 1;
-      throw new CliError(payload?.error?.message ?? `Approve API request failed (${response.status}).`, code, exitCode, payload?.error?.details);
+      // Preserve status for callers that must recover a possibly committed write.
+      const details = response.ok ? { ...payload?.error?.details, invalidSuccessStatus: response.status } : payload?.error?.details;
+      throw new CliError(payload?.error?.message ?? `Approve API request failed (${response.status}).`, code, exitCode, details);
     }
     return { data: payload.data as T, ...(payload.meta ? { meta: payload.meta } : {}) };
   }
