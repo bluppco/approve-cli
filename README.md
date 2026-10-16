@@ -60,6 +60,8 @@ approve auth login --no-browser
 ```sh
 approve issues list
 approve --project api issues list
+approve issues list --projects web api
+approve issues list --all-projects
 approve context clear
 approve auth logout
 ```
@@ -105,9 +107,29 @@ Issue labels are workspace-scoped and can be assigned to issues with repeated `-
 
 `issues list` applies filters on the server before pagination, so older matching
 issues are included. `--limit` sets a page size from 1 to 200 (default 200).
-Continue with `--cursor` using `meta.nextCursor` and the same workspace, project,
+Use `--projects <project...>` to match issues from any selected projects. Values
+can be project IDs, slugs, or unique exact names; quote names containing spaces.
+The CLI resolves the selection from one project catalog and rejects unavailable
+projects or ambiguous names before requesting issues. Duplicate selections and
+aliases collapse to the same project.
+
+`--projects` and `--all-projects` override the saved project for that command
+without changing saved context. They are mutually exclusive and cannot be
+combined with an explicit global `--project`. Without either flag, the existing
+saved or explicit `--project` applies; without any project selection, all readable
+projects are included.
+
+Continue with `--cursor` using `meta.nextCursor` and the same workspace, projects,
 and filters. Date filters use UTC calendar days. Pages read current data rather
 than a frozen snapshot; concurrent edits can shift results between pages.
+Project order and duplicate aliases may change between pages as long as the
+resolved selection stays the same.
+
+```sh
+approve --workspace acme --json issues list --projects web "Backend" --limit 50
+approve --workspace acme --json issues list --projects api web --limit 50 --cursor NEXT_CURSOR
+approve --workspace acme issues list --all-projects --priority urgent
+```
 
 Issue and timeline-entry deletion is soft deletion, matching the web product. Approve does not currently expose workspace or project deletion.
 

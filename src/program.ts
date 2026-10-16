@@ -495,6 +495,8 @@ export function createProgram(runtime: CliRuntime) {
       output(runtime, command).data(result);
     });
   issues.command("list")
+    .option("--projects <project...>", "project IDs, slugs, or exact names (matches any; overrides saved project)")
+    .option("--all-projects", "include all readable projects, overriding the saved project")
     .option("--status <status>", "status name or id")
     .option("--category <category>", "status category")
     .option("--assignee <member>", "assignee handle or id")
@@ -503,14 +505,19 @@ export function createProgram(runtime: CliRuntime) {
     .option("--due <due>", "overdue, today, week, none, or YYYY-MM-DD")
     .option("--limit <limit>", "page size (1–200)", asPositiveInteger, 200)
     .option("--cursor <cursor>", "continue the same filtered issue list")
-    .action(async (options: { status?: string; category?: string; assignee?: string; label: string[]; priority?: IssuePriority; due?: string; limit: number; cursor?: string }, command: Command) => {
+    .action(async (options: { projects?: string[]; allProjects?: boolean; status?: string; category?: string; assignee?: string; label: string[]; priority?: IssuePriority; due?: string; limit: number; cursor?: string }, command: Command) => {
       if (options.limit > 200) throw new CliError("Limit must be between 1 and 200.", "invalid_input", 2);
-      const scope = await runtime.scope(overrides(command), { project: "optional" });
+      if (options.projects && options.allProjects) throw new CliError("--projects and --all-projects cannot be combined.", "invalid_input", 2);
+      const workspaceProjects = options.projects !== undefined || options.allProjects;
+      if (workspaceProjects && globals(command).project !== undefined) throw new CliError("--projects and --all-projects cannot be combined with --project.", "invalid_input", 2);
+      const scope = await runtime.scope(overrides(command), { project: workspaceProjects ? "none" : "optional" });
+      const selectedProjects = options.projects ? await runtime.resolveProjects(scope.context, scope.workspace, options.projects) : undefined;
       const selectedLabels = await resolvedIssueLabels(runtime, scope, options.label, false) ?? [];
       const status = options.status ? await runtime.resolveStatus(scope.context, scope.workspace, options.status) : undefined;
       const assignee = options.assignee ? await runtime.resolvePerson(scope.context, scope.workspace, options.assignee) : undefined;
       const result = await listWorkspaceIssues(scope.context.api, scope.workspace.slug, {
         projectSlug: scope.project?.slug,
+        projectSlugs: selectedProjects?.map((project) => project.slug),
         labelIds: selectedLabels.map((label) => label.id),
         statusId: status?.id, category: options.category, assigneeId: assignee?.id,
         priority: options.priority, due: options.due, limit: options.limit, cursor: options.cursor,

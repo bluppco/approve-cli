@@ -228,9 +228,11 @@ export async function loadTeam(api: ApproveApiClient, workspace: string) {
   ]);
   return { workspace: { role: detail.role }, members, departments, pendingInvitations };
 }
-export const listWorkspaceIssues = (api: ApproveApiClient, workspace: string, options: { projectSlug?: string; labelIds?: string[]; statusId?: string; category?: string; assigneeId?: string; priority?: IssuePriority; due?: string; limit?: number; cursor?: string } = {}) => {
+export const listWorkspaceIssues = (api: ApproveApiClient, workspace: string, options: { projectSlug?: string; projectSlugs?: string[]; labelIds?: string[]; statusId?: string; category?: string; assigneeId?: string; priority?: IssuePriority; due?: string; limit?: number; cursor?: string } = {}) => {
+  if (options.projectSlug !== undefined && options.projectSlugs !== undefined) throw new CliError("Pass projectSlug or projectSlugs, not both.", "invalid_input", 2);
   const search = new URLSearchParams();
   if (options.projectSlug) search.set("project", options.projectSlug);
+  for (const slug of [...new Set(options.projectSlugs ?? [])].sort()) search.append("project", slug);
   for (const labelId of options.labelIds ?? []) search.append("label", labelId);
   for (const [key, value] of Object.entries({ status: options.statusId, category: options.category, assignee: options.assigneeId, priority: options.priority, due: options.due, limit: options.limit, cursor: options.cursor })) {
     if (value !== undefined) search.set(key, String(value));

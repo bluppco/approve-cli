@@ -232,6 +232,21 @@ export class CliRuntime {
     return found;
   }
 
+  async resolveProjects(context: ApproveContext, workspace: ApiRecord, keys: string[]): Promise<ApiRecord[]> {
+    const catalog = await listWorkspaceProjects(context.api, workspace.slug);
+    const projects: ApiRecord[] = catalog.projects;
+    const selected = new Map<string, ApiRecord>();
+    for (const key of keys) {
+      const exact = projects.find((project) => matches(key, project.id, project.slug));
+      const names = exact ? [] : projects.filter((project) => project.access?.canRead && matches(key, project.name));
+      if (names.length > 1) throw new CliError(`Project name ${key} is ambiguous. Use a project ID or slug.`, "invalid_input", 2);
+      const found = exact ?? names[0];
+      if (!found || !found.access?.canRead) throw new CliError(`Project ${key} was not found or is not accessible.`, "not_found", 5);
+      selected.set(String(found.slug), found);
+    }
+    return [...selected.values()].sort((left, right) => String(left.slug).localeCompare(String(right.slug)));
+  }
+
   async resolvePerson(context: ApproveContext, workspace: ApiRecord, key: string): Promise<ApiRecord> {
     const normalized = key.replace(/^@/, "").toLowerCase();
     const members = (await loadTeam(context.api, workspace.slug)).members;
